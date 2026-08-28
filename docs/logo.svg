@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- The brand mark on its graphite tile — the README/Dock presentation of
+       Sources/LLMUsageUI/Resources/BrandMark/LLMUsageMark.svg. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2B2D34"/>
+      <stop offset="1" stop-color="#0B0C0F"/>
+    </linearGradient>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#FAFAFA"/>
+      <stop offset="0.5" stop-color="#8F8F8F"/>
+      <stop offset="1" stop-color="#D6D6D6"/>
+    </linearGradient>
+  </defs>
+  <rect x="41" y="41" width="430" height="430" rx="96.75" fill="url(#tile)"/>
+  <rect x="43.6" y="43.6" width="424.8" height="424.8" rx="94.15"
+        fill="none" stroke="#FFFFFF" stroke-opacity="0.11" stroke-width="5.15"/>
+  <g transform="translate(75.12 75.12) scale(0.705)">
+    <path d="M 176 96
+             C 216 68 268 76 284 128
+             C 294 162 276 216 256 256
+             C 236 296 218 350 228 384
+             C 244 436 296 444 336 416"
+          fill="none" stroke="url(#chrome)" stroke-width="36" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!--
+    LLMUsage's mark: an integral sign. The app integrates token usage over time, and the
+    stroke is one tennis-ball seam laid flat — Enfield's ball, drawn with one line.
+
+    Single source of truth for every surface that shows the logo: the in-app mark
+    (LLMUsageMark / BrandMarkLibrary) and the Dock icon (scripts/generate-app-icon.swift
+    rasterizes this file onto a graphite tile). The curve has 180-degree rotational
+    symmetry about the center: shallow hooks, long spine.
+  -->
+  <defs>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#FAFAFA"/>
+      <stop offset="0.5" stop-color="#8F8F8F"/>
+      <stop offset="1" stop-color="#D6D6D6"/>
+    </linearGradient>
+  </defs>
+  <path d="M 176 96
+           C 216 68 268 76 284 128
+           C 294 162 276 216 256 256
+           C 236 296 218 350 228 384
+           C 244 436 296 444 336 416"
+        fill="none" stroke="url(#chrome)" stroke-width="36" stroke-linecap="round"/>
+</svg>
