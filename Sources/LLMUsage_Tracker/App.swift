@@ -34,9 +34,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var resetRefreshTimer: Timer?
     private var isRefreshing = false
     private var preferencesObserver: NSObjectProtocol?
+    private let warmUp: WarmUpCoordinator
 
     init(providers: [any UsageProvider]) {
         self.providers = providers
+        warmUp = WarmUpCoordinator(window: Self.sessionWindow(providers))
+    }
+
+    /// Warm up asks for the client's session window at the instant it fires; the published
+    /// snapshot can be a whole refresh interval old, and a window opened in that gap would
+    /// turn the warm up into a plain request that spends quota for nothing.
+    private static func sessionWindow(_ providers: [any UsageProvider]) -> WarmUpCoordinator.Window {
+        { client in
+            guard let provider = providers.first(where: { $0.id == client.providerID }),
+                  let usage = try? await provider.fetchUsage() else { return nil }
+            return usage.lines.first { $0.label == "Session" }?.resetsAt
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -45,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem()
         configurePopover()
         scheduleRefreshTimer()
+        warmUp.start()
         preferencesObserver = DistributedNotificationCenter.default().addObserver(
             forName: AppPreferences.didChangeNotification,
             object: nil,
@@ -77,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer = nil
         resetRefreshTimer?.invalidate()
         resetRefreshTimer = nil
+        warmUp.stop()
         if let preferencesObserver {
             DistributedNotificationCenter.default().removeObserver(preferencesObserver)
         }

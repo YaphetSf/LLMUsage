@@ -93,20 +93,7 @@ struct ZAIProvider: UsageProvider {
     }
 
     private static func loadAPIKey() throws -> String {
-        let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/openusage/zai.json")
-        if let data = try? Data(contentsOf: path),
-           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let key = (root["apiKey"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !key.isEmpty {
-            return key
-        }
-        for name in ["ZAI_API_KEY", "GLM_API_KEY"] {
-            if let key = ProcessInfo.processInfo.environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !key.isEmpty {
-                return key
-            }
-        }
-        throw UsageError.missingCredentials
+        guard let key = try GLMCredentials.load() else { throw UsageError.missingCredentials }
+        return key
     }
 }

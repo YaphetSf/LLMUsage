@@ -58,7 +58,8 @@ public actor UsageHistoryRepository {
 
     public init(
         providers: [any UsageHistoryProvider] = [
-            ClaudeHistoryProvider(), CodexHistoryProvider(), OpenCodeHistoryProvider()
+            ClaudeHistoryProvider(), CodexHistoryProvider(),
+            OpenCodeHistoryProvider(), ZCodeHistoryProvider()
         ],
         databaseURL: URL? = nil
     ) {

@@ -11,6 +11,7 @@ struct ControlCenterView: View {
         case usage
         case menuBar
         case appearance
+        case warmUp
         case about
 
         var id: Self { self }
@@ -21,6 +22,7 @@ struct ControlCenterView: View {
             case .usage: "Usage"
             case .menuBar: "Menu Bar"
             case .appearance: "Appearance"
+            case .warmUp: "Warm Up"
             case .about: "About"
             }
         }
@@ -31,6 +33,7 @@ struct ControlCenterView: View {
             case .usage: "chart.bar"
             case .menuBar: "menubar.rectangle"
             case .appearance: "paintbrush"
+            case .warmUp: "bolt.horizontal.circle"
             case .about: "info"
             }
         }
@@ -42,6 +45,7 @@ struct ControlCenterView: View {
     @StateObject private var snapshots = SnapshotStore()
     @StateObject private var launchAtLogin = LaunchAtLoginController()
     @StateObject private var usageStore = UsageStore()
+    @StateObject private var warmUp = WarmUpSettings()
 
     var body: some View {
         ZStack {
@@ -65,6 +69,7 @@ struct ControlCenterView: View {
         .environmentObject(preferences)
         .environmentObject(snapshots)
         .environmentObject(launchAtLogin)
+        .environmentObject(warmUp)
         .animation(.spring(response: 0.42, dampingFraction: 0.85), value: selection)
         .frame(minWidth: 820, minHeight: 560)
     }
@@ -78,6 +83,7 @@ struct ControlCenterView: View {
             case .usage: UsageView(store: usageStore)
             case .menuBar: MenuBarSettingsView()
             case .appearance: AppearanceSettingsView()
+            case .warmUp: WarmUpView()
             case .about: AboutView()
             }
         }

@@ -10,7 +10,8 @@ let package = Package(
         .executable(name: "LLMUsage", targets: ["LLMUsage"])
     ],
     targets: [
-        .target(name: "LLMUsagePreferences", path: "Sources/LLMUsagePreferences"),
+        .target(name: "LLMUsagePreferences", path: "Sources/LLMUsagePreferences",
+                linkerSettings: [.linkedFramework("Security")]),
         /// Local usage history: reads what the agent CLIs already wrote to disk. Shared because
         /// both executables need it — the control center renders the Usage page from it, and the
         /// tracker can price a menu-bar spend figure from the same scan.

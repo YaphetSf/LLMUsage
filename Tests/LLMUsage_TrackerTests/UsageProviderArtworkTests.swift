@@ -9,7 +9,8 @@ import Testing
 /// precisely to point somewhere other than `id`, which makes that easy to get wrong unnoticed.
 @Test @MainActor func everyHistoryProviderResolvesToRealArtwork() {
     let providers: [any UsageHistoryProvider] = [
-        ClaudeHistoryProvider(), CodexHistoryProvider(), OpenCodeHistoryProvider()
+        ClaudeHistoryProvider(), CodexHistoryProvider(),
+        OpenCodeHistoryProvider(), ZCodeHistoryProvider()
     ]
     for provider in providers {
         #expect(
@@ -26,6 +27,9 @@ import Testing
     #expect(CodexHistoryProvider().iconName != CodexHistoryProvider().id)
     // OpenCode has no separate account card, so its mark is named after the provider itself.
     #expect(OpenCodeHistoryProvider().iconName == "opencode")
+    // ZCode bills to the same Z.ai account the GLM quota card reports, and publishes no separate
+    // wordmark of its own, so it wears that account's mark rather than an invented one.
+    #expect(ZCodeHistoryProvider().iconName == "zai")
     for name in ["claude", "codex", "zai", "minimax"] {
         #expect(ProviderLogoLibrary.image(for: name) != nil)
     }
