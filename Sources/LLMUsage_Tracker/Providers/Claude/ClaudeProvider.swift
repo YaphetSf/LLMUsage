@@ -44,13 +44,15 @@ struct ClaudeProvider: UsageProvider {
         ]
         let lines = fields.compactMap { field -> MetricLine? in
             guard let window = body[field.key] as? [String: Any],
-                  let percent = ProviderJSON.percent(window["utilization"])
+                  let usedPercent = ProviderJSON.number(window["utilization"]),
+                  let percent = ProviderJSON.percent(usedPercent)
             else { return nil }
             return MetricLine(
                 label: field.label,
                 percent: percent,
                 text: nil,
-                resetsAt: ProviderJSON.iso8601Date(window["resets_at"])
+                resetsAt: ProviderJSON.iso8601Date(window["resets_at"]),
+                windowIsActive: usedPercent > 0
             )
         }
         return Usage(plan: plan, lines: lines)

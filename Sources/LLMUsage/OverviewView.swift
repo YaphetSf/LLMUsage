@@ -30,14 +30,22 @@ struct OverviewView: View {
 
     // MARK: Providers
 
+    /// Rows come from the account registry, not the snapshot bundle: a switched-off account
+    /// has no snapshot anymore, and its row is the only way back on.
     private var providersCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if snapshots.snapshots.isEmpty {
-                placeholderProviders
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(snapshots.snapshots) { snapshot in
-                        OverviewProviderRow(snapshot: snapshot)
+            VStack(spacing: 10) {
+                ForEach(KnownProvider.allCases) { provider in
+                    OverviewProviderRow(
+                        provider: provider,
+                        snapshot: snapshots.snapshots.first { $0.id == provider.id },
+                        isTracked: !preferences.disabledProviderIDs.contains(provider.id)
+                    ) { tracked in
+                        if tracked {
+                            preferences.disabledProviderIDs.remove(provider.id)
+                        } else {
+                            preferences.disabledProviderIDs.insert(provider.id)
+                        }
                     }
                 }
             }
@@ -45,15 +53,8 @@ struct OverviewView: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
-    }
-
-    private var placeholderProviders: some View {
-        VStack(spacing: 10) {
-            ForEach(SampleUsage.providers, id: \.id) { provider in
-                OverviewPlaceholderRow(provider: provider)
-            }
-        }
-        .redacted(reason: .placeholder)
+        .animation(.spring(response: 0.36, dampingFraction: 0.85),
+                   value: preferences.disabledProviderIDs)
     }
 
     // MARK: Refresh
@@ -104,56 +105,78 @@ struct OverviewView: View {
 }
 
 /// One row in the Overview providers list: badge, name + plan, both percentages, error
-/// state if the last fetch failed.
+/// state if the last fetch failed, and the switch that decides whether the tracker polls
+/// the account at all. A switched-off account keeps its row — dimmed, no numbers — so it
+/// stays reachable to switch back on.
 private struct OverviewProviderRow: View {
-    let snapshot: ProviderSnapshot
+    let provider: KnownProvider
+    let snapshot: ProviderSnapshot?
+    let isTracked: Bool
+    let onChange: @MainActor @Sendable (Bool) -> Void
 
     private var session: MetricLine? { usage?.lines.first { $0.label == "Session" } }
     private var weekly: MetricLine? { usage?.lines.first { $0.label == "Weekly" } }
     private var usage: Usage? {
-        if case .success(let u) = snapshot.result { return u }
+        if case .success(let u) = snapshot?.result { return u }
         return nil
     }
 
     var body: some View {
         HStack(spacing: 14) {
-            ProviderBadge(providerID: snapshot.id, size: 34)
+            ProviderBadge(providerID: provider.id, size: 34)
             VStack(alignment: .leading, spacing: 3) {
-                Text(snapshot.displayName)
+                Text(provider.displayName)
                     .font(.system(.headline, design: .rounded))
                     .foregroundStyle(.white)
-                subtitle
+                if isTracked {
+                    subtitle
+                }
             }
+            .opacity(isTracked ? 1 : 0.45)
             Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 3) {
-                percentRow(label: "5h", metric: session)
-                percentRow(label: "1w", metric: weekly)
+            if isTracked {
+                VStack(alignment: .trailing, spacing: 3) {
+                    percentRow(label: "5h", metric: session)
+                    percentRow(label: "1w", metric: weekly)
+                }
             }
+            Toggle("", isOn: Binding(
+                get: { isTracked },
+                set: onChange
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .tint(Brand.active)
+            .accessibilityLabel("Track \(provider.displayName) usage")
         }
         .padding(.vertical, 4)
     }
 
     @ViewBuilder
     private var subtitle: some View {
-        switch snapshot.result {
-        case .success(let usage):
-            if let plan = usage.plan, !plan.isEmpty {
-                InfoChip { Text(plan) }
-            } else {
-                Text("—").foregroundStyle(.tertiary)
+        if let snapshot {
+            switch snapshot.result {
+            case .success(let usage):
+                if let plan = usage.plan, !plan.isEmpty {
+                    InfoChip { Text(plan) }
+                } else {
+                    Text("—").foregroundStyle(.tertiary)
+                }
+            case .missingCredentials:
+                ErrorTag(text: "Missing credentials")
+            case .authExpired:
+                ErrorTag(text: "Login expired")
+            case .noPlan:
+                ErrorTag(text: "No active plan")
+            case .rateLimited:
+                ErrorTag(text: "Rate limited")
+            case .network(let msg):
+                ErrorTag(text: msg)
+            case .emptyButSuccessful:
+                ErrorTag(text: "No data")
             }
-        case .missingCredentials:
-            ErrorTag(text: "Missing credentials")
-        case .authExpired:
-            ErrorTag(text: "Login expired")
-        case .noPlan:
-            ErrorTag(text: "No active plan")
-        case .rateLimited:
-            ErrorTag(text: "Rate limited")
-        case .network(let msg):
-            ErrorTag(text: msg)
-        case .emptyButSuccessful:
-            ErrorTag(text: "No data")
+        } else {
+            Text("—").foregroundStyle(.tertiary)
         }
     }
 
@@ -179,22 +202,6 @@ private struct OverviewProviderRow: View {
                     .foregroundStyle(.tertiary)
             }
         }
-    }
-}
-
-/// Placeholder row used until the tracker writes its first snapshot bundle.
-private struct OverviewPlaceholderRow: View {
-    let provider: SampleUsage.Provider
-
-    var body: some View {
-        HStack(spacing: 14) {
-            ProviderBadge(providerID: provider.id, size: 34)
-            Text(provider.displayName)
-                .font(.system(.headline, design: .rounded))
-                .foregroundStyle(.white)
-            Spacer(minLength: 8)
-        }
-        .padding(.vertical, 4)
     }
 }
 

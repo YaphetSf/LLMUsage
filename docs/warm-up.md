@@ -48,14 +48,14 @@ its reset is fixed from that instant. A request sent while a window is already o
 nothing: it is ordinary usage that spends the current window's budget and the weekly quota. So
 warm up only does work in the gap between one window closing and the next real request.
 
-A run therefore begins by fetching the client's quota and reading the `Session` line's reset,
-treating the window as open while that reset is in the future. It asks at the firing instant
-rather than reading the snapshot the tracker publishes, which can be a whole refresh interval
-old: a window opened inside that gap would turn the warm up into a plain request. An occurrence
-landing in an open window is recorded as `Warm until <time>` and spent there — nothing is sent,
-and nothing is deferred to when the window closes. A schedule runs at its own time or not at
-all, so continuous use all day simply means no warm up ever runs. `Warm up now` behaves the same
-way.
+A run therefore begins by fetching the client's quota and reading the `Session` line's usage
+and reset. The window is open only when the provider reports non-zero usage and a future reset.
+Codex also publishes a moving, future reset for an idle zero-percent window; that candidate
+boundary does not suppress warm up. The check happens at the firing instant rather than using
+the published snapshot, which can be a whole refresh interval old. An occurrence landing in an
+open window is recorded as `Warm until <time>` and spent there — nothing is sent, and nothing is
+deferred to when the window closes. A schedule runs at its own time or not at all, so continuous
+use all day simply means no warm up ever runs. `Warm up now` behaves the same way.
 
 A client whose fetch fails or reports no `Session` reset is never skipped this way: GLM's
 Coding plan reports no session window, so it always runs at its scheduled time.

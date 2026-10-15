@@ -10,8 +10,9 @@ struct LLMUsageTrackerApp {
     static func main() async {
         let providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), ZAIProvider(), MiniMaxProvider()]
         if CommandLine.arguments.contains("--once") {
-            let results = await AppDelegate.fetchAll(providers)
-            AppDelegate.printOnce(results, providers: providers)
+            let active = providers.filter { !AppPreferences.disabledProviderIDs.contains($0.id) }
+            let results = await AppDelegate.fetchAll(active)
+            AppDelegate.printOnce(results, providers: active)
             return
         }
 
@@ -41,6 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         warmUp = WarmUpCoordinator(window: Self.sessionWindow(providers))
     }
 
+    /// Accounts the tracker actually polls. Read per use rather than cached at launch so a
+    /// flip in the control center takes effect on the next refresh — and immediately, via
+    /// `handlePreferencesChange`.
+    private var activeProviders: [any UsageProvider] {
+        providers.filter { !AppPreferences.disabledProviderIDs.contains($0.id) }
+    }
+
     /// Warm up asks for the client's session window at the instant it fires; the published
     /// snapshot can be a whole refresh interval old, and a window opened in that gap would
     /// turn the warm up into a plain request that spends quota for nothing.
@@ -48,8 +56,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         { client in
             guard let provider = providers.first(where: { $0.id == client.providerID }),
                   let usage = try? await provider.fetchUsage() else { return nil }
-            return usage.lines.first { $0.label == "Session" }?.resetsAt
+            return Self.openSessionEnd(in: usage)
         }
+    }
+
+    /// A future reset is only an open window when the provider also reports activity. Codex
+    /// publishes a moving `now + 5 hours` reset while usage is still zero; treating that as
+    /// active suppresses the request that should establish the real window.
+    nonisolated static func openSessionEnd(in usage: Usage) -> Date? {
+        guard let session = usage.lines.first(where: { $0.label == "Session" }),
+              session.windowIsActive != false else { return nil }
+        return session.resetsAt
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -64,10 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                self?.scheduleRefreshTimer()
-                self?.updatePresentation()
-            }
+            Task { @MainActor in self?.handlePreferencesChange() }
         }
         Task { await refresh() }
     }
@@ -155,12 +169,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isRefreshing else { return }
         isRefreshing = true
         updatePresentation()
-        let results = await Self.fetchAll(providers)
+        // Rebuilding the dictionary wholesale drops the snapshot of an account switched off
+        // mid-flight instead of letting it linger until the next relaunch.
+        let results = await Self.fetchAll(activeProviders)
         snapshots = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
         publishSnapshots(results)
         isRefreshing = false
         scheduleResetRefreshTimer()
         updatePresentation()
+        // A refresh that raced an account being switched back on misses it; pick it up now
+        // rather than at the next periodic tick. `fetchAll` returns a snapshot for every
+        // provider, success or failure, so this cannot loop.
+        if activeProviders.contains(where: { snapshots[$0.id] == nil }) {
+            await refresh()
+        }
+    }
+
+    /// Reacts to a preference flip from the control center. The refresh cadence may have
+    /// changed, and an account just switched off has to leave the strip now, not at the next
+    /// refresh. A switched-on account has no snapshot yet, so it needs a full fetch.
+    private func handlePreferencesChange() {
+        scheduleRefreshTimer()
+        let active = activeProviders
+        let activeIDs = Set(active.map(\.id))
+        let before = snapshots
+        snapshots = before.filter { activeIDs.contains($0.key) }
+        if snapshots.count != before.count {
+            publishSnapshots(active.compactMap { snapshots[$0.id] })
+            scheduleResetRefreshTimer()
+        }
+        updatePresentation()
+        if active.contains(where: { snapshots[$0.id] == nil }) {
+            refreshNow()
+        }
     }
 
     private func updatePresentation() {
@@ -177,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func dashboardView() -> UsageDashboardView {
         UsageDashboardView(
-            providers: providers.map {
+            providers: activeProviders.map {
                 ProviderCardState(id: $0.id, displayName: $0.displayName, snapshot: snapshots[$0.id])
             },
             displayMode: AppPreferences.usageDisplayMode,
@@ -192,7 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
         let displayMode = AppPreferences.usageDisplayMode
         let menuBarDisplayMode = AppPreferences.menuBarDisplayMode
-        let metrics = providers.map { provider in
+        let metrics = activeProviders.map { provider in
             let presentation = Self.compactPresentation(
                 for: snapshots[provider.id],
                 displayMode: displayMode
@@ -209,6 +250,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let colorScheme: ColorScheme = button.effectiveAppearance.bestMatch(
             from: [.darkAqua, .aqua]
         ) == .darkAqua ? .dark : .light
+        // Every account switched off: there is no strip to draw, so the item wears the plain
+        // gauge it had before the first snapshot instead of a blank or stale strip.
+        guard !metrics.isEmpty else {
+            if let image = NSImage(systemSymbolName: "gauge.medium", accessibilityDescription: "LLMUsage") {
+                button.image = image
+                button.image?.isTemplate = true
+                statusItem?.length = NSStatusItem.variableLength
+            }
+            button.setAccessibilityLabel("LLMUsage")
+            return
+        }
         if let image = StatusStripRenderer.image(
             metrics: metrics,
             displayMode: menuBarDisplayMode,

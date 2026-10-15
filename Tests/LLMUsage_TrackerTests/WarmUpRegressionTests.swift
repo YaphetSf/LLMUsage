@@ -32,6 +32,46 @@ private func instant(_ string: String) -> Date { ISO8601DateFormatter().date(fro
     #expect(CLIWarmUpExecutor.completion(.codex, output: output) == nil)
 }
 
+@Test func codexIdleProvisionalWindowDoesNotSuppressWarmUp() throws {
+    let now = instant("2026-09-09T07:00:00Z")
+    let usage = try CodexProvider.mapResponse(Data(#"""
+    {
+      "rate_limit": {
+        "primary_window": {
+          "used_percent": 0,
+          "limit_window_seconds": 18000,
+          "reset_after_seconds": 18000
+        }
+      }
+    }
+    """#.utf8), now: now)
+
+    let session = try #require(usage.lines.first { $0.label == "Session" })
+    #expect(session.windowIsActive == false)
+    #expect(session.resetsAt == now.addingTimeInterval(18_000))
+    #expect(AppDelegate.openSessionEnd(in: usage) == nil)
+}
+
+@Test func codexFractionalUsageKeepsAnOpenedWindowWarm() throws {
+    let now = instant("2026-09-09T07:00:00Z")
+    let usage = try CodexProvider.mapResponse(Data(#"""
+    {
+      "rate_limit": {
+        "primary_window": {
+          "used_percent": 0.4,
+          "limit_window_seconds": 18000,
+          "reset_after_seconds": 9000
+        }
+      }
+    }
+    """#.utf8), now: now)
+
+    let session = try #require(usage.lines.first { $0.label == "Session" })
+    #expect(session.percent == 0)
+    #expect(session.windowIsActive == true)
+    #expect(AppDelegate.openSessionEnd(in: usage) == now.addingTimeInterval(9_000))
+}
+
 @Test func glmRejectsTruncatedReasoningWithoutAnswer() {
     let output = Data("{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\",\"reasoning_content\":\"I need to reply\"}}]}".utf8)
     #expect(GLMWarmUpExecutor.completion(output) == nil)

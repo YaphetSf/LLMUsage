@@ -67,7 +67,7 @@ struct CodexProvider: UsageProvider {
 
     private struct WindowCandidate {
         let window: [String: Any]
-        let percent: Int?
+        let usedPercent: Double?
         let fallback: WindowKind
     }
 
@@ -79,7 +79,7 @@ struct CodexProvider: UsageProvider {
         guard let window = value as? [String: Any] ?? (headerPercent == nil ? nil : [:]) else { return nil }
         return WindowCandidate(
             window: window,
-            percent: ProviderJSON.percent(window["used_percent"] ?? headerPercent),
+            usedPercent: ProviderJSON.number(window["used_percent"] ?? headerPercent),
             fallback: fallback
         )
     }
@@ -87,9 +87,12 @@ struct CodexProvider: UsageProvider {
     private static func line(kind: WindowKind, candidates: [WindowCandidate], now: Date) -> MetricLine? {
         let exact = candidates.first { exactKind($0.window) == kind }
         let fallback = candidates.first { exactKind($0.window) == nil && $0.fallback == kind }
-        guard let candidate = exact ?? fallback, let percent = candidate.percent else { return nil }
+        guard let candidate = exact ?? fallback, let usedPercent = candidate.usedPercent,
+              let percent = ProviderJSON.percent(usedPercent) else { return nil }
         let label = kind == .session ? "Session" : "Weekly"
-        return MetricLine(label: label, percent: percent, text: nil, resetsAt: resetDate(candidate.window, now: now))
+        return MetricLine(label: label, percent: percent, text: nil,
+                          resetsAt: resetDate(candidate.window, now: now),
+                          windowIsActive: usedPercent > 0)
     }
 
     private static func exactKind(_ window: [String: Any]) -> WindowKind? {

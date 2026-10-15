@@ -30,12 +30,17 @@ public struct MetricLine: Equatable, Sendable, Codable {
     public var percent: Int?
     public var text: String?
     public var resetsAt: Date?
+    /// Whether this quota window has actually opened. Some providers publish a moving,
+    /// future reset for an idle window, so `resetsAt > now` is not evidence of activity.
+    public var windowIsActive: Bool?
 
-    public init(label: String, percent: Int? = nil, text: String? = nil, resetsAt: Date? = nil) {
+    public init(label: String, percent: Int? = nil, text: String? = nil, resetsAt: Date? = nil,
+                windowIsActive: Bool? = nil) {
         self.label = label
         self.percent = percent
         self.text = text
         self.resetsAt = resetsAt
+        self.windowIsActive = windowIsActive
     }
 }
 

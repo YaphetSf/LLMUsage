@@ -25,11 +25,18 @@ final class Preferences: ObservableObject {
         didSet { write(accentChoice.rawValue, AppPreferences.accentChoiceKey) }
     }
 
+    /// Accounts the tracker should not poll. In-place insert/remove still trips `didSet`, so
+    /// the toggle rows can mutate the set directly.
+    @Published var disabledProviderIDs: Set<String> {
+        didSet { write(Array(disabledProviderIDs).sorted(), AppPreferences.disabledProvidersKey) }
+    }
+
     init() {
         menuBarDisplayMode = AppPreferences.menuBarDisplayMode
         usageDisplayMode = AppPreferences.usageDisplayMode
         refreshFrequency = AppPreferences.refreshFrequency
         accentChoice = AppPreferences.accentChoice
+        disabledProviderIDs = AppPreferences.disabledProviderIDs
     }
 
     private func write(_ value: Any, _ key: String) {

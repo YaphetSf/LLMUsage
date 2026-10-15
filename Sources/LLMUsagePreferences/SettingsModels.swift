@@ -122,6 +122,9 @@ public enum AppPreferences {
     public static let defaultUsageDisplayMode = UsageDisplayMode.remaining
     public static let menuBarDisplayModeKey = "menuBarDisplayMode"
     public static let defaultMenuBarDisplayMode = MenuBarDisplayMode.capacity
+    /// Accounts the user turned off. Absent means tracked, so an account added in a future
+    /// release starts tracked without a migration.
+    public static let disabledProvidersKey = "disabledProviders"
     public static let refreshFrequencyKey = "refreshIntervalMinutes"
     public static let defaultRefreshFrequency = RefreshFrequency.every5Minutes
     /// `nonisolated` because they are plain constants, not part of the `UserDefaults`-backed
@@ -150,6 +153,11 @@ public enum AppPreferences {
 
     public static var menuBarDisplayMode: MenuBarDisplayMode {
         defaults.string(forKey: menuBarDisplayModeKey).flatMap(MenuBarDisplayMode.init(rawValue:)) ?? defaultMenuBarDisplayMode
+    }
+
+    public static var disabledProviderIDs: Set<String> {
+        get { Set(defaults.stringArray(forKey: disabledProvidersKey) ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: disabledProvidersKey) }
     }
 
     public static var accentChoice: AccentChoice {
