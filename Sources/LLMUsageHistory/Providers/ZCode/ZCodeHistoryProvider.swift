@@ -36,7 +36,7 @@ public struct ZCodeHistoryProvider: UsageHistoryProvider {
         for path in paths {
             do {
                 let database = try SQLiteReadOnlyDatabase(path: path)
-                guard database.hasTable("model_usage") else { continue }
+                guard try database.hasTable("model_usage") else { continue }
                 try database.query(Self.aggregateSQL, parameters: [cutoffMilliseconds]) { row in
                     guard let hour = row.string(0),
                           let day = row.string(1),

@@ -9,11 +9,15 @@ private struct ZCodeFixture {
     let directory: URL
     var databasePath: String { directory.appendingPathComponent("db.sqlite").path }
 
-    init(rows: [Row]) throws {
+    /// `wal` leaves the database in WAL journal mode with no sidecars — the state ZCode's file is
+    /// in while the app is closed. This build of the `sqlite3` CLI leaves a checkpointed, empty
+    /// `-wal`/`-shm` behind on exit instead of deleting them, so the fixture removes them itself.
+    init(rows: [Row], wal: Bool = false) throws {
         directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("zcode-fixture-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var sql = """
+        var sql = wal ? "PRAGMA journal_mode=WAL;\n" : ""
+        sql += """
             CREATE TABLE model_usage (
               id TEXT PRIMARY KEY, logical_request_id TEXT, attempt_index INTEGER DEFAULT 0,
               provider_id TEXT NOT NULL, model_id TEXT NOT NULL, status TEXT NOT NULL,
@@ -32,6 +36,11 @@ private struct ZCodeFixture {
                 """
         }
         try Self.run(sql: sql, at: databasePath)
+        if wal {
+            for suffix in ["-wal", "-shm"] {
+                try? FileManager.default.removeItem(atPath: databasePath + suffix)
+            }
+        }
     }
 
     func cleanUp() { try? FileManager.default.removeItem(at: directory) }
@@ -128,6 +137,22 @@ private let noon = Date(timeIntervalSince1970: 1_780_000_000)
     #expect(day.tokens.reasoning == 80)
     #expect(day.tokens.output == 120)
     #expect(day.tokens.total == 620)
+}
+
+// MARK: - Reading while ZCode is closed
+
+@Test func aWALDatabaseLeftCheckpointedByACleanExitIsStillReadable() async throws {
+    let fixture = try ZCodeFixture(rows: [
+        .request(at: noon, input: 387_727, output: 234, cacheRead: 387_520)
+    ], wal: true)
+    defer { fixture.cleanUp() }
+    // A clean exit checkpoints and deletes the sidecars; a read-only connection then cannot
+    // recreate them, which is the whole bug.
+    #expect(!FileManager.default.fileExists(atPath: fixture.databasePath + "-wal"))
+    let history = try #require(try await scan(fixture, now: noon))
+    let day = try #require(history.days.first)
+    #expect(day.requests == 1)
+    #expect(day.tokens.total == 387_727 + 234)
 }
 
 // MARK: - Rows that must not be counted

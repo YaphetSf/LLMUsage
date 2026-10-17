@@ -8,21 +8,32 @@ import SQLite3
 /// (switching a WAL database's mode is a write). A `busy_timeout` covers the common case of the
 /// tool holding a write lock while we read.
 ///
+/// A tool that deletes its WAL sidecars on exit (ZCode) leaves a database a plain read-only
+/// connection cannot open, because it tries to recreate them. When no `-wal` file exists the
+/// handle is reopened with `immutable=1`, which promises the file will not change and needs no
+/// sidecars; a live database with a `-wal` keeps the normal connection.
+///
 /// Not `Sendable`: it wraps a C pointer and must not cross isolation domains. Callers open it,
 /// query, and drop it inside one function body.
 final class SQLiteReadOnlyDatabase {
     private let handle: OpaquePointer
 
     init(path: String) throws {
-        var db: OpaquePointer?
-        let status = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil)
-        guard status == SQLITE_OK, let db else {
-            let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed (\(status))"
-            if let db { sqlite3_close_v2(db) }
-            throw UsageHistoryError.logsUnreadable(message)
+        let primary = try Self.open(path: path, uri: false)
+        if let failure = Self.probeFailure(primary) {
+            sqlite3_close_v2(primary)
+            guard !FileManager.default.fileExists(atPath: path + "-wal") else {
+                throw UsageHistoryError.logsUnreadable(failure)
+            }
+            let immutable = try Self.open(path: Self.immutableURI(for: path), uri: true)
+            if let retry = Self.probeFailure(immutable) {
+                sqlite3_close_v2(immutable)
+                throw UsageHistoryError.logsUnreadable(retry)
+            }
+            handle = immutable
+        } else {
+            handle = primary
         }
-        sqlite3_busy_timeout(db, 3_000)
-        handle = db
     }
 
     deinit { sqlite3_close_v2(handle) }
@@ -74,11 +85,50 @@ final class SQLiteReadOnlyDatabase {
 
     /// Whether a table exists, so a schema change in the other tool surfaces as "no data" rather
     /// than an unreadable-logs error.
-    func hasTable(_ name: String) -> Bool {
+    func hasTable(_ name: String) throws -> Bool {
         var names: Set<String> = []
-        try? query("SELECT name FROM sqlite_master WHERE type='table';") { row in
+        try query("SELECT name FROM sqlite_master WHERE type='table';") { row in
             if let value = row.string(0) { names.insert(value) }
         }
         return names.contains(name)
+    }
+
+    private static func open(path: String, uri: Bool) throws -> OpaquePointer {
+        var db: OpaquePointer?
+        let flags = uri ? SQLITE_OPEN_READONLY | SQLITE_OPEN_URI : SQLITE_OPEN_READONLY
+        let status = sqlite3_open_v2(path, &db, flags, nil)
+        guard status == SQLITE_OK, let db else {
+            let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed (\(status))"
+            if let db { sqlite3_close_v2(db) }
+            throw UsageHistoryError.logsUnreadable(message)
+        }
+        sqlite3_busy_timeout(db, 3_000)
+        return db
+    }
+
+    /// The error message of running `SELECT 1 FROM sqlite_master LIMIT 1`, or `nil` when the
+    /// connection can actually read the database — a sidecar-less WAL database fails only here.
+    private static func probeFailure(_ db: OpaquePointer) -> String? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT 1 FROM sqlite_master LIMIT 1", -1, &statement, nil) == SQLITE_OK,
+              let statement
+        else {
+            let message = String(cString: sqlite3_errmsg(db))
+            sqlite3_finalize(statement)
+            return message
+        }
+        defer { sqlite3_finalize(statement) }
+        let status = sqlite3_step(statement)
+        return status == SQLITE_ROW || status == SQLITE_DONE
+            ? nil
+            : String(cString: sqlite3_errmsg(db))
+    }
+
+    /// SQLite URI filenames percent-decode the path, so the characters that carry URI structure
+    /// must be escaped.
+    private static func immutableURI(for path: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "%?#")
+        return "file:\(path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path)?immutable=1"
     }
 }
