@@ -8,16 +8,22 @@ private actor ScanCount {
     func increment() { value += 1 }
 }
 
+private actor ScanFeed {
+    private(set) var history: UsageHistory
+    init(history: UsageHistory) { self.history = history }
+    func set(_ history: UsageHistory) { self.history = history }
+}
+
 private struct UsageStoreFixtureProvider: UsageHistoryProvider {
     let counter: ScanCount
-    let history: UsageHistory
+    let feed: ScanFeed
 
     let id = "fixture"
     let displayName = "Fixture"
 
     func scanHistory(daysBack: Int, now: Date) async throws -> UsageHistory? {
         await counter.increment()
-        return history
+        return await feed.history
     }
 }
 
@@ -52,7 +58,7 @@ func rangeAndDaySelectionProjectOneSnapshotWithoutRescanning() async throws {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = UsageHistoryRepository(
-        providers: [UsageStoreFixtureProvider(counter: count, history: history)],
+        providers: [UsageStoreFixtureProvider(counter: count, feed: ScanFeed(history: history))],
         databaseURL: directory.appendingPathComponent("cache.sqlite3")
     )
     let store = UsageStore(repository: repository, now: { now }, calendar: calendar)
@@ -75,4 +81,54 @@ func rangeAndDaySelectionProjectOneSnapshotWithoutRescanning() async throws {
     #expect(store.results.first?.history?.tokens.total == 300)
     #expect(store.hourlySeries.reduce(0) { $0 + $1.tokens } == 300)
     #expect(await count.value == 1)
+}
+
+@Test @MainActor
+func secondUsageRoundRescansAndReplacesTheFirstRound() async throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let now = try #require(calendar.date(from: DateComponents(
+        timeZone: calendar.timeZone, year: 2026, month: 8, day: 28, hour: 12
+    )))
+    let today = DailyUsageAccumulator.dayKey(from: now, calendar: calendar)
+
+    func history(inputTokens: Int) -> UsageHistory {
+        UsageHistory(
+            providerID: "fixture",
+            days: [
+                DayUsage(day: today, models: [
+                    ModelDayUsage(model: "fixture/model", tokens: TokenBreakdown(input: inputTokens), requests: 1)
+                ])
+            ],
+            hours: [
+                HourUsage(hour: today + "T10", tokens: TokenBreakdown(input: inputTokens), requests: 1)
+            ]
+        )
+    }
+
+    let count = ScanCount()
+    let feed = ScanFeed(history: history(inputTokens: 500))
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = UsageHistoryRepository(
+        providers: [UsageStoreFixtureProvider(counter: count, feed: feed)],
+        databaseURL: directory.appendingPathComponent("cache.sqlite3")
+    )
+    let store = UsageStore(repository: repository, now: { now }, calendar: calendar)
+
+    store.reload()
+    store.reload()
+    await store.refresh()
+    #expect(await count.value == 1)
+    #expect(store.totalTokens.total == 500)
+    #expect(store.isScanning == false)
+
+    await feed.set(history(inputTokens: 900))
+    store.reload()
+    await store.refresh()
+    #expect(await count.value == 2)
+    #expect(store.totalTokens.total == 900)
+    #expect(store.isScanning == false)
 }

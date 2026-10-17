@@ -62,7 +62,6 @@ final class UsageStore: ObservableObject {
     private let now: @Sendable () -> Date
     private let calendar: Calendar
     private var snapshot: UsageHistorySnapshot?
-    private var hasStartedLoading = false
     private var refreshTask: Task<Void, Never>?
 
     init(
@@ -77,42 +76,39 @@ final class UsageStore: ObservableObject {
 
     deinit { refreshTask?.cancel() }
 
-    /// Starts stale-while-revalidate once for this app-owned store. Re-entering Usage calls this
-    /// again, but the existing snapshot and refresh task remain untouched.
-    func loadIfNeeded() {
-        guard !hasStartedLoading else { return }
-        hasStartedLoading = true
-        isScanning = true
-        let repository = self.repository
-        let currentDate = now()
-        let timeZone = calendar.timeZone
+    /// Rescans on every Usage page appearance; a scan already in flight is reused, not duplicated.
+    func reload() {
+        guard refreshTask == nil else { return }
+        startRefreshTask()
+    }
+
+    /// Awaitable entry into the same scan path, for tests and explicit refreshes.
+    func refresh() async {
+        if refreshTask == nil { startRefreshTask() }
+        await refreshTask?.value
+    }
+
+    private func startRefreshTask() {
         refreshTask = Task { [weak self] in
-            if let cached = await repository.cachedSnapshot(timeZone: timeZone) {
-                guard !Task.isCancelled else { return }
-                self?.apply(cached)
-            }
-            let fresh = await repository.refresh(
-                daysBack: Self.historyWindow,
-                now: currentDate,
-                timeZone: timeZone
-            )
-            guard !Task.isCancelled else { return }
-            self?.apply(fresh)
-            self?.isScanning = false
+            await self?.scan()
+            self?.refreshTask = nil
         }
     }
 
-    /// Deterministic test seam and an explicit future refresh entry point.
-    func refresh() async {
+    /// One scan round: cached snapshot paints first only when nothing is shown yet, then a fresh scan.
+    private func scan() async {
         isScanning = true
+        defer { isScanning = false }
+        let timeZone = calendar.timeZone
+        if snapshot == nil, let cached = await repository.cachedSnapshot(timeZone: timeZone) {
+            apply(cached)
+        }
         let fresh = await repository.refresh(
             daysBack: Self.historyWindow,
             now: now(),
-            timeZone: calendar.timeZone
+            timeZone: timeZone
         )
         apply(fresh)
-        hasStartedLoading = true
-        isScanning = false
     }
 
     var hasAnyUsage: Bool { results.contains { $0.history?.days.isEmpty == false } }

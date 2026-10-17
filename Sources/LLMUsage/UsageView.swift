@@ -1,3 +1,4 @@
+import AppKit
 import Charts
 import LLMUsageHistory
 import LLMUsageUI
@@ -27,7 +28,10 @@ struct UsageView: View {
             .frame(maxWidth: 660, alignment: .leading)
         }
         .scrollIndicators(.never)
-        .task { store.loadIfNeeded() }
+        .task { store.reload() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.reload()
+        }
     }
 
     // MARK: Range
