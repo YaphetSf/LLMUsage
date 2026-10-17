@@ -6,30 +6,36 @@ struct ClaudeProvider: UsageProvider {
     let displayName = "Claude"
 
     private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
-    private static let keychainService = "Claude Code-credentials"
     private let session: URLSession
+    private let credentials: ClaudeCredentialStore
 
-    init(session: URLSession = .shared) {
+    init(session: URLSession = .shared, credentials: ClaudeCredentialStore? = nil) {
         self.session = session
+        self.credentials = credentials ?? ClaudeCredentialStore(session: session)
     }
 
     func fetchUsage() async throws -> Usage {
-        let credential = try Self.loadCredential()
+        var credential = try await credentials.validCredential()
+        var (data, response) = try await requestUsage(bearerToken: credential.accessToken)
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            credential = try await credentials.refresh(replacing: credential.accessToken)
+            (data, response) = try await requestUsage(bearerToken: credential.accessToken)
+        }
+        _ = try validatedHTTPResponse(response, provider: displayName)
+        return try Self.mapResponse(data, plan: credential.plan)
+    }
+
+    private func requestUsage(bearerToken: String) async throws -> (Data, URLResponse) {
         let request = URLRequest.usageRequest(
             url: Self.usageURL,
-            bearerToken: credential.accessToken,
+            bearerToken: bearerToken,
             headers: [
                 "anthropic-beta": "oauth-2025-04-20",
                 "User-Agent": "claude-code/2.1.69"
             ]
         )
-
         do {
-            let (data, response) = try await session.data(for: request)
-            _ = try validatedHTTPResponse(response, provider: displayName)
-            return try Self.mapResponse(data, plan: credential.plan)
-        } catch let error as UsageError {
-            throw error
+            return try await session.data(for: request)
         } catch {
             throw UsageError.network("Claude: \(error.localizedDescription)")
         }
@@ -56,67 +62,5 @@ struct ClaudeProvider: UsageProvider {
             )
         }
         return Usage(plan: plan, lines: lines)
-    }
-
-    private struct Credential {
-        let accessToken: String
-        let plan: String?
-    }
-
-    private static func loadCredential() throws -> Credential {
-        // Both sources read what Claude Code wrote from outside its keychain ACL: the
-        // on-disk file, and the keychain entry via Apple's `security` tool (covered by the
-        // entry's partition list). The in-process SecItem API would prompt for the login
-        // password on every access by a binary the ACL has never seen — which is every dev
-        // rebuild of this app, since ad-hoc signatures change the cdhash each time.
-        let environment = ProcessInfo.processInfo.environment
-        let base = environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : $0 }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude").path
-        let path = URL(fileURLWithPath: base).appendingPathComponent(".credentials.json")
-        if let data = try? Data(contentsOf: path), let credential = parseCredential(data) {
-            return credential
-        }
-        if let keychain = readKeychain(), let credential = parseCredential(keychain) {
-            return credential
-        }
-        throw UsageError.missingCredentials
-    }
-
-    private static func readKeychain() -> Data? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", keychainService, "-w"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            let output = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
-            let secret = String(decoding: output, as: UTF8.self)
-                .trimmingCharacters(in: .newlines)
-            return secret.isEmpty ? nil : Data(secret.utf8)
-        } catch {
-            return nil
-        }
-    }
-
-    private static func parseCredential(_ data: Data) -> Credential? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = root["claudeAiOauth"] as? [String: Any],
-              let token = (oauth["accessToken"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !token.isEmpty
-        else { return nil }
-
-        let subscription = (oauth["subscriptionType"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let tier = oauth["rateLimitTier"] as? String
-        let basePlan = subscription.flatMap { $0.isEmpty ? nil : $0.capitalized }
-        let multiplier = tier.flatMap { value -> String? in
-            guard let range = value.range(of: #"\d+x"#, options: .regularExpression) else { return nil }
-            return String(value[range])
-        }
-        let plan = [basePlan, multiplier].compactMap { $0 }.joined(separator: " ")
-        return Credential(accessToken: token, plan: plan.isEmpty ? nil : plan)
     }
 }
