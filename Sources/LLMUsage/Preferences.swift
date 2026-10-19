@@ -86,10 +86,6 @@ final class SnapshotStore: ObservableObject {
     }
 }
 
-/// Whether the menu bar tracker process is alive. The tracker is launched from its
-/// Application Support location by path — it is deliberately not registered as an app the
-/// user could open themselves.
-///
 /// This polls rather than observing `NSWorkspace`: the workspace launch and terminate
 /// notifications are only posted for apps that appear in the Dock, and the tracker is an
 /// accessory that never does, so observing them left this switch showing the opposite of
@@ -97,8 +93,6 @@ final class SnapshotStore: ObservableObject {
 @MainActor
 final class TrackerStatus: ObservableObject {
     @Published private(set) var isRunning = false
-    /// False when the helper is missing from Application Support, which means a broken or
-    /// half-finished install rather than a tracker the user turned off.
     @Published private(set) var isInstalled = TrackerHelper.isInstalled
 
     private static let pollInterval: TimeInterval = 1

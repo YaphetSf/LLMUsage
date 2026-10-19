@@ -1,5 +1,4 @@
 openusage/
 .build/
 dist/
-scripts/
-Packaging/
+Packaging/AppIcon.icns

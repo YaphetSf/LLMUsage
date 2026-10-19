@@ -2,18 +2,6 @@ import Foundation
 import Combine
 import ServiceManagement
 
-/// Owns the toggle that opens LLMUsage's menu-bar tracker at login.
-///
-/// The tracker is a separate `.app` bundle living in Application Support, so it cannot use
-/// `SMAppService.mainApp` to register itself — that API only works for the calling app and
-/// requires the bundle to live in a LaunchServices-known location like `/Applications`. The
-/// control center instead registers a `LaunchAgent` plist (bundled in the control center's
-/// own `.app` at `Contents/Library/LaunchAgents/`) that points at the tracker's executable
-/// by path. `SMAppService.agent(plistName:)` is the macOS-blessed API for that pattern.
-///
-/// Both processes observe `AppPreferences.defaults` for the persisted state and a
-/// DistributedNotification for change pings, so flipping the switch in the control center
-/// reaches the tracker (and vice versa) without any bespoke IPC.
 @MainActor
 public final class LaunchAtLoginController: ObservableObject {
     /// Matches the plist shipped inside `LLMUsage.app/Contents/Library/LaunchAgents/`.

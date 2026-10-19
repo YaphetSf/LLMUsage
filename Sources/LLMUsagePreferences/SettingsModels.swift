@@ -165,29 +165,14 @@ public enum AppPreferences {
     }
 }
 
-/// Where the menu bar tracker lives. It is a helper, not something the user launches: it sits
-/// in Application Support rather than Applications, so only LLMUsage.app ever starts or stops
-/// it, and it never turns up in Spotlight, Launchpad, or the Finder alongside the real app.
-///
-/// It is still an app bundle — a status item needs `LSUIElement` and an `Info.plist`, and
-/// stopping it needs a bundle identifier to find the running process by.
 public enum TrackerHelper {
     public static let bundleIdentifier = "com.llmusage.tracker"
     public static let bundleName = "LLMUsage_Tracker.app"
 
-    public static var supportDirectory: URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false
-        )) ?? URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support", isDirectory: true)
-        return base.appendingPathComponent("LLMUsage", isDirectory: true)
-    }
-
     public static var bundleURL: URL {
-        supportDirectory.appendingPathComponent(bundleName, isDirectory: true)
+        Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Library/LoginItems", isDirectory: true)
+            .appendingPathComponent(bundleName, isDirectory: true)
     }
 
     public static var isInstalled: Bool {
