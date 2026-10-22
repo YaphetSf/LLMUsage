@@ -329,6 +329,9 @@ private func withFakeCLI(_ script: String, operation: (String) async throws -> V
     try await operation(executable.path)
 }
 
+/// The login shell still runs, but without the developer's own dotfiles.
+private let emptyHome = CLIWarmUpExecutor.loginEnvironment.merging(["HOME": "/var/empty"]) { $1 }
+
 private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpClientConfiguration {
     var configuration = WarmUpClientConfiguration(client: client)
     configuration.executablePath = path
@@ -336,10 +339,10 @@ private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpCli
 }
 
 @Test func cliReportsMissingBinaryAndExitFailure() async throws {
-    #expect(await CLIWarmUpExecutor().run(.codex, configuration: cliConfiguration(.codex, path: "/not/a/real/cli"))
+    #expect(await CLIWarmUpExecutor(environment: emptyHome).run(.codex, configuration: cliConfiguration(.codex, path: "/not/a/real/cli"))
         .outcome == .failed("CLI not found"))
     try await withFakeCLI("exit 23\n") { path in
-        let report = await CLIWarmUpExecutor().run(.codex, configuration: cliConfiguration(.codex, path: path))
+        let report = await CLIWarmUpExecutor(environment: emptyHome).run(.codex, configuration: cliConfiguration(.codex, path: path))
         #expect(report.outcome == .failed("CLI exit 23"))
         #expect(report.detail == "exit 23")
     }
@@ -347,7 +350,7 @@ private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpCli
 
 @Test func successNeedsACompletedModelTurnNotAnExitCode() async throws {
     try await withFakeCLI("exit 0\n") { path in
-        let report = await CLIWarmUpExecutor().run(.codex, configuration: cliConfiguration(.codex, path: path))
+        let report = await CLIWarmUpExecutor(environment: emptyHome).run(.codex, configuration: cliConfiguration(.codex, path: path))
         #expect(report.outcome == .failed("No completion"))
         #expect(report.detail == "exit 0")
     }
@@ -355,7 +358,7 @@ private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpCli
     printf '%s\\n' '{"type":"turn.started"}'
     printf '%s\\n' '{"type":"turn.failed","error":{"message":"quota"}}'
     """) { path in
-        #expect(await CLIWarmUpExecutor().run(.codex, configuration: cliConfiguration(.codex, path: path))
+        #expect(await CLIWarmUpExecutor(environment: emptyHome).run(.codex, configuration: cliConfiguration(.codex, path: path))
             .outcome == .failed("No completion"))
     }
     try await withFakeCLI("""
@@ -365,7 +368,7 @@ private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpCli
     """) { path in
         var configuration = cliConfiguration(.codex, path: path)
         configuration.model = "gpt-5.3-codex"
-        let report = await CLIWarmUpExecutor().run(.codex, configuration: configuration)
+        let report = await CLIWarmUpExecutor(environment: emptyHome).run(.codex, configuration: configuration)
         #expect(report.outcome == .succeeded)
         #expect(report.tokens == 15)
         #expect(report.model == "gpt-5.3-codex")
@@ -375,11 +378,11 @@ private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpCli
 
 @Test func claudeReportsItsAnsweringModelAndRejectsApplicationErrors() async throws {
     try await withFakeCLI("printf '%s' '{\"type\":\"result\",\"is_error\":true}'\n") { path in
-        #expect(await CLIWarmUpExecutor().run(.claude, configuration: cliConfiguration(.claude, path: path))
+        #expect(await CLIWarmUpExecutor(environment: emptyHome).run(.claude, configuration: cliConfiguration(.claude, path: path))
             .outcome == .failed("No completion"))
     }
     try await withFakeCLI("printf '%s' '{\"type\":\"result\",\"is_error\":false,\"result\":\"\"}'\n") { path in
-        #expect(await CLIWarmUpExecutor().run(.claude, configuration: cliConfiguration(.claude, path: path))
+        #expect(await CLIWarmUpExecutor(environment: emptyHome).run(.claude, configuration: cliConfiguration(.claude, path: path))
             .outcome == .failed("No completion"))
     }
     let success = """
@@ -387,7 +390,7 @@ private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpCli
     "modelUsage":{"claude-haiku-4-5":{"costUSD":0.0009},"claude-opus-5":{"costUSD":0.0064}}}
     """
     try await withFakeCLI("printf '%s' '\(success)'\n") { path in
-        let report = await CLIWarmUpExecutor().run(.claude, configuration: cliConfiguration(.claude, path: path))
+        let report = await CLIWarmUpExecutor(environment: emptyHome).run(.claude, configuration: cliConfiguration(.claude, path: path))
         #expect(report.outcome == .succeeded)
         #expect(report.model == "claude-opus-5")
         #expect(report.tokens == 6)
@@ -398,9 +401,9 @@ private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpCli
     try await withFakeCLI("exec /bin/sleep 30\n") { path in
         let configuration = cliConfiguration(.codex, path: path)
         let start = Date()
-        #expect(await CLIWarmUpExecutor(timeout: 0.1).run(.codex, configuration: configuration)
+        #expect(await CLIWarmUpExecutor(timeout: 0.1, environment: emptyHome).run(.codex, configuration: configuration)
             .outcome == .failed("Timed out"))
-        let task = Task { await CLIWarmUpExecutor().run(.codex, configuration: configuration) }
+        let task = Task { await CLIWarmUpExecutor(environment: emptyHome).run(.codex, configuration: configuration) }
         try await Task.sleep(for: .milliseconds(50))
         task.cancel()
         #expect(await task.value.outcome == .cancelled)
@@ -423,8 +426,29 @@ private func cliConfiguration(_ client: WarmUpClient, path: String) -> WarmUpCli
     try await withFakeCLI(script) { path in
         var configuration = cliConfiguration(.codex, path: path)
         configuration.model = "$(exit 99) model"
-        #expect(await CLIWarmUpExecutor().run(.codex, configuration: configuration).outcome == .succeeded)
+        #expect(await CLIWarmUpExecutor(environment: emptyHome).run(.codex, configuration: configuration).outcome == .succeeded)
     }
+}
+
+@Test func cliStartsFromACleanLoginShellNotTheTrackerEnvironment() async throws {
+    setenv("HTTPS_PROXY", "http://127.0.0.1:9", 1)
+    defer { unsetenv("HTTPS_PROXY") }
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let executable = folder.appendingPathComponent("codex")
+    try Data("""
+    #!/bin/sh
+    [ -z "$HTTPS_PROXY" ] || exit 6
+    printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}'
+    printf '%s\\n' '{"type":"turn.completed"}'
+    """.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try Data("export PATH='\(folder.path)':\"$PATH\"\n".utf8).write(to: folder.appendingPathComponent(".zshrc"))
+    let environment = CLIWarmUpExecutor.loginEnvironment.merging(["HOME": folder.path]) { $1 }
+    let report = await CLIWarmUpExecutor(environment: environment)
+        .run(.codex, configuration: WarmUpClientConfiguration(client: .codex))
+    #expect(report.outcome == .succeeded)
 }
 
 private final class WarmUpURLProtocol: URLProtocol, @unchecked Sendable {

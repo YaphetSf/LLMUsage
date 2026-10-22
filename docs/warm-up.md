@@ -65,9 +65,12 @@ Coding plan reports no session window, so it always runs at its scheduled time.
 Every run sends a fixed request to reply with `OK` without tools or file access. CLI runs use
 a temporary directory, empty stdin and no session persistence or resume. Codex uses a
 read-only sandbox and ignores user config; Claude uses safe mode with tools and MCP disabled.
-Both keep the CLI's own authentication, accept an explicit executable and model, and fall
-back to the user's login shell when the executable path is blank. The installed CLIs must
-support these flags.
+Both keep the CLI's own authentication and accept an explicit executable and model. Every CLI
+run starts in a fresh `zsh` login shell that receives only `HOME`, `USER`, `LOGNAME`, `SHELL`,
+`TMPDIR` and a base `PATH`, so the CLI sees what a new Terminal sees. Nothing from the
+tracker's own environment is passed on: whoever launched the tracker, a stale `HTTPS_PROXY`
+or agent-session variables never reach a run. A blank executable path resolves through that
+shell's `PATH`. The installed CLIs must support these flags.
 
 GLM keys are saved in Keychain. The shared credential loader also recognizes the existing
 `.config/openusage/zai.json` source, then `ZAI_API_KEY` / `GLM_API_KEY` from the process

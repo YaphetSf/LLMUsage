@@ -102,6 +102,13 @@ private final class NoWarmUpRedirects: NSObject, URLSessionTaskDelegate {
 
 struct CLIWarmUpExecutor: Sendable {
     var timeout: TimeInterval = 120
+    /// All the login shell starts from: the tracker's own environment never reaches a CLI.
+    var environment: [String: String] = Self.loginEnvironment
+
+    static var loginEnvironment: [String: String] {
+        ["HOME": NSHomeDirectory(), "USER": NSUserName(), "LOGNAME": NSUserName(), "SHELL": "/bin/zsh",
+         "TMPDIR": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+    }
 
     static func arguments(_ client: WarmUpClient, configuration: WarmUpClientConfiguration) -> [String] {
         var arguments: [String]
@@ -183,19 +190,17 @@ struct CLIWarmUpExecutor: Sendable {
             process.standardOutput = handle
             process.standardError = FileHandle.nullDevice
             let path = configuration.executablePath.trimmingCharacters(in: .whitespacesAndNewlines)
-            let arguments = Self.arguments(client, configuration: configuration)
             if !path.isEmpty {
                 guard path.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: path) else {
                     return .failed("CLI not found")
                 }
-                process.executableURL = URL(fileURLWithPath: path)
-                process.arguments = arguments
-            } else {
-                // Positional argv avoids interpolating paths, models or prompts into shell code.
-                // The same timeout covers shell initialization and the actual request.
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                process.arguments = ["-ilc", "exec \"$@\"", "llmusage-warmup", client.rawValue] + arguments
             }
+            // Positional argv avoids interpolating paths, models or prompts into shell code.
+            // The same timeout covers shell initialization and the actual request.
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.environment = environment
+            process.arguments = ["-ilc", "exec \"$@\"", "llmusage-warmup", path.isEmpty ? client.rawValue : path]
+                + Self.arguments(client, configuration: configuration)
             guard try cancellation.start(process) else { return .cancelled }
             defer { cancellation.clearProcess() }
             let deadline = Date().addingTimeInterval(timeout)
