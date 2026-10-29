@@ -158,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configurePopover() {
+        popover.delegate = self
         popover.behavior = .transient
         popover.animates = true
         // The panel paints its own dark canvas; without this the popover's chrome and arrow
@@ -422,5 +423,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("\(snapshot.displayName): ERROR Empty successful response")
             }
         }
+    }
+}
+
+extension AppDelegate: NSPopoverDelegate {
+    /// A closed popover keeps its window, so a hosting view left in it keeps SwiftUI's
+    /// repeating background animation rendering off screen.
+    func popoverDidClose(_ notification: Notification) {
+        popover.contentViewController = nil
+        hostingController = nil
     }
 }
