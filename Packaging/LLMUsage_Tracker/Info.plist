@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>CFBundleDisplayName</key><string>LLMUsage</string>
+    <key>CFBundleDisplayName</key><string>LLMUsage Tracker</string>
     <key>CFBundleExecutable</key><string>LLMUsage_Tracker</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>com.llmusage.tracker</string>

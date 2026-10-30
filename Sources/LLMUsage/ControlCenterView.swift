@@ -72,6 +72,9 @@ struct ControlCenterView: View {
         .environmentObject(warmUp)
         .animation(.spring(response: 0.42, dampingFraction: 0.85), value: selection)
         .frame(minWidth: 820, minHeight: 560)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            launchAtLogin.refresh()
+        }
     }
 
     /// The active page. Re-keying on `selection` remounts the page so entrance animations

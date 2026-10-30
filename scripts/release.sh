@@ -65,12 +65,6 @@ stage_app() {
 stage_app "$STAGED_CONTROL_CENTER" "$CONTROL_CENTER_NAME" "$CONTROL_CENTER_BINARY"
 stage_app "$STAGED_TRACKER" "$TRACKER_NAME" "$TRACKER_BINARY"
 
-print "==> bundling launch agent"
-LAUNCH_AGENT_NAME="com.llmusage.tracker.plist"
-mkdir -p "$STAGED_CONTROL_CENTER/Contents/Library/LaunchAgents"
-cp "$PROJECT_ROOT/Packaging/$CONTROL_CENTER_NAME/LaunchAgents/$LAUNCH_AGENT_NAME" \
-    "$STAGED_CONTROL_CENTER/Contents/Library/LaunchAgents/$LAUNCH_AGENT_NAME"
-
 print "==> signing"
 codesign --force --timestamp --options runtime --sign "$CODESIGN_IDENTITY" "$STAGED_TRACKER"
 codesign --force --timestamp --options runtime --sign "$CODESIGN_IDENTITY" "$STAGED_CONTROL_CENTER"

@@ -1,42 +1,140 @@
-import Foundation
 import Combine
+import Foundation
 import ServiceManagement
 
 @MainActor
-public final class LaunchAtLoginController: ObservableObject {
-    /// Matches the plist shipped inside `LLMUsage.app/Contents/Library/LaunchAgents/`.
-    public static let agentPlistName = "com.llmusage.tracker.plist"
+protocol LoginItemService {
+    var status: SMAppService.Status { get }
+    func register() throws
+    func unregister() throws
+}
 
-    /// What `SMAppService` reports right now. `requiresApproval` means the user has flipped
-    /// the switch but hasn't yet allowed the helper in *System Settings → General → Login
-    /// Items* — the toggle should reflect that without lying about whether registration
-    /// succeeded.
+extension SMAppService: LoginItemService {}
+
+private struct LoginItemState: Codable {
+    let status: Int
+    let error: String?
+}
+
+@MainActor
+public final class TrackerLoginItem {
+    private let defaults: UserDefaults
+    private let service: any LoginItemService
+    private let notifications: NotificationCenter
+    private var observers: Set<AnyCancellable> = []
+    private var lastError: String?
+
+    public convenience init() {
+        self.init(
+            defaults: AppPreferences.defaults,
+            service: SMAppService.mainApp,
+            notifications: DistributedNotificationCenter.default()
+        )
+    }
+
+    init(defaults: UserDefaults, service: any LoginItemService, notifications: NotificationCenter) {
+        self.defaults = defaults
+        self.service = service
+        self.notifications = notifications
+    }
+
+    public func start() {
+        guard observers.isEmpty else { return }
+        notifications.publisher(for: AppPreferences.didChangeNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.reconcile() }
+            }
+            .store(in: &observers)
+        notifications.publisher(for: LaunchAtLoginController.statusRequestedNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.refresh() }
+            }
+            .store(in: &observers)
+        reconcile()
+    }
+
+    public func stop() {
+        observers.removeAll()
+    }
+
+    private var wantsEnabled: Bool {
+        defaults.object(forKey: LaunchAtLoginController.preferenceKey) as? Bool ?? true
+    }
+
+    public func reconcile() {
+        lastError = nil
+        do {
+            switch (wantsEnabled, service.status) {
+            case (true, .notRegistered), (true, .notFound):
+                try service.register()
+            case (false, .enabled), (false, .requiresApproval):
+                try service.unregister()
+            default:
+                break
+            }
+        } catch {
+            if !matchesIntent(service.status) {
+                lastError = error.localizedDescription
+            }
+        }
+        if lastError == nil && !matchesIntent(service.status) {
+            lastError = wantsEnabled
+                ? "The tracker login item is not registered."
+                : "The tracker login item is still registered."
+        }
+        publishState()
+    }
+
+    private func refresh() {
+        if matchesIntent(service.status) { lastError = nil }
+        publishState()
+    }
+
+    private func matchesIntent(_ status: SMAppService.Status) -> Bool {
+        if wantsEnabled {
+            return status == .enabled || status == .requiresApproval
+        }
+        return status == .notRegistered || status == .notFound
+    }
+
+    private func publishState() {
+        let state = LoginItemState(status: service.status.rawValue, error: lastError)
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        defaults.set(data, forKey: LaunchAtLoginController.stateKey)
+        notifications.post(name: LaunchAtLoginController.stateDidChangeNotification, object: nil)
+    }
+}
+
+@MainActor
+public final class LaunchAtLoginController: ObservableObject {
+    static let preferenceKey = "launchAtLoginEnabled"
+    static let stateKey = "launchAtLoginState"
+    static let statusRequestedNotification = Notification.Name("com.llmusage.loginItemStatusRequested")
+    static let stateDidChangeNotification = Notification.Name("com.llmusage.loginItemStateDidChange")
+
     @Published public private(set) var status: SMAppService.Status = .notRegistered
     @Published public private(set) var lastError: String?
 
-    private var observer: NSObjectProtocol?
+    private let defaults: UserDefaults
+    private let notifications: NotificationCenter
+    private var observer: AnyCancellable?
 
-    public init() {
-        refresh()
-        observer = DistributedNotificationCenter.default().addObserver(
-            forName: AppPreferences.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
+    public convenience init() {
+        self.init(defaults: AppPreferences.defaults, notifications: DistributedNotificationCenter.default())
     }
 
-    // The observer lives for the lifetime of the control-center window; tearing it down here
-    // is the same job Swift will do when the whole process exits, so we leave it alone to
-    // avoid touching a non-Sendable Foundation observer from a nonisolated deinit.
+    init(defaults: UserDefaults, notifications: NotificationCenter) {
+        self.defaults = defaults
+        self.notifications = notifications
+        observer = notifications.publisher(for: Self.stateDidChangeNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.loadState() }
+            }
+        refresh()
+    }
 
     public var isEnabled: Bool {
-        switch status {
-        case .enabled, .requiresApproval: true
-        case .notRegistered, .notFound: false
-        @unknown default: false
-        }
+        status == .enabled || status == .requiresApproval
     }
 
     public var requiresUserApproval: Bool {
@@ -44,36 +142,29 @@ public final class LaunchAtLoginController: ObservableObject {
     }
 
     public func refresh() {
-        let service = SMAppService.agent(plistName: Self.agentPlistName)
-        status = service.status
+        loadState()
+        notifications.post(name: Self.statusRequestedNotification, object: nil)
     }
 
-    /// Flips the toggle to match the desired state. Returns `true` if `SMAppService` accepted
-    /// the change. A `false` return with `requiresApproval == true` is success-on-paper: the
-    /// user just hasn't confirmed in System Settings yet, so the UI should keep the toggle
-    /// on and show the "Allow in Login Items" hint.
-    @discardableResult
-    public func setEnabled(_ enabled: Bool) -> Bool {
-        let service = SMAppService.agent(plistName: Self.agentPlistName)
-        do {
-            if enabled {
-                if service.status == .enabled { return true }
-                try service.register()
-            } else {
-                if service.status == .notRegistered { return true }
-                try service.unregister()
-            }
-            lastError = nil
-            status = service.status
-            DistributedNotificationCenter.default().post(
-                name: AppPreferences.didChangeNotification,
-                object: nil
-            )
-            return true
-        } catch {
-            lastError = error.localizedDescription
-            status = service.status
-            return false
-        }
+    public func setEnabled(_ enabled: Bool) {
+        // Persist intent before asking the tracker, including when registration fails.
+        defaults.set(enabled, forKey: Self.preferenceKey)
+        lastError = nil
+        notifications.post(name: AppPreferences.didChangeNotification, object: nil)
+    }
+
+    private func loadState() {
+        guard let data = defaults.data(forKey: Self.stateKey),
+              let state = try? JSONDecoder().decode(LoginItemState.self, from: data) else { return }
+        status = SMAppService.Status(rawValue: state.status) ?? .notRegistered
+        lastError = state.error
+    }
+
+    public func clearError() {
+        lastError = nil
+    }
+
+    public func openLoginItemsSettings() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 }

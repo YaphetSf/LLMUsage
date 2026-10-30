@@ -88,19 +88,35 @@ struct OverviewView: View {
                 .font(.system(.headline, design: .rounded))
                 .foregroundStyle(.white)
             Spacer(minLength: 12)
+            if launchAtLogin.requiresUserApproval {
+                Button("Allow in Login Items") {
+                    launchAtLogin.openLoginItemsSettings()
+                }
+            }
             Toggle("", isOn: Binding(
                 get: { launchAtLogin.isEnabled },
-                set: { launchAtLogin.setEnabled($0) }
+                set: {
+                    launchAtLogin.setEnabled($0)
+                    if !tracker.isRunning { tracker.start() }
+                }
             ))
             .labelsHidden()
             .toggleStyle(.switch)
             .tint(Brand.active)
-            .disabled(launchAtLogin.lastError != nil)
+            .disabled(!tracker.isInstalled)
             .accessibilityLabel("Launch the tracker at login")
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+        .alert("Could not update login item", isPresented: Binding(
+            get: { launchAtLogin.lastError != nil },
+            set: { if !$0 { launchAtLogin.clearError() } }
+        )) {
+            Button("OK") { launchAtLogin.clearError() }
+        } message: {
+            Text(launchAtLogin.lastError ?? "")
+        }
     }
 }
 

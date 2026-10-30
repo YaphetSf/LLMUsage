@@ -7,9 +7,17 @@ TRACKER_NAME=LLMUsage_Tracker
 CONTROL_CENTER_NAME=LLMUsage
 RESOURCE_BUNDLE_NAME=LLMUsage_LLMUsageUI.bundle
 APP_ICON="$PROJECT_ROOT/Packaging/AppIcon.icns"
-CONTROL_CENTER_DESTINATION="$HOME/Applications/$CONTROL_CENTER_NAME.app"
+CONTROL_CENTER_DESTINATION="/Applications/$CONTROL_CENTER_NAME.app"
 TRACKER_DESTINATION="$CONTROL_CENTER_DESTINATION/Contents/Library/LoginItems/$TRACKER_NAME.app"
+LEGACY_CONTROL_CENTER_DESTINATION="$HOME/Applications/$CONTROL_CENTER_NAME.app"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+SIGNING_IDENTITY=-
+
+if [[ -n "${CODESIGN_IDENTITY:-}" ]] \
+    && /usr/bin/security find-identity -v -p codesigning \
+    | /usr/bin/grep -F -- "$CODESIGN_IDENTITY" >/dev/null; then
+    SIGNING_IDENTITY=$CODESIGN_IDENTITY
+fi
 
 cd "$PROJECT_ROOT"
 if [[ ! -f "$APP_ICON" ]]; then
@@ -47,18 +55,15 @@ stage_app() {
     cp "$binary" "$staged/Contents/MacOS/$name"
     cp "$APP_ICON" "$staged/Contents/Resources/AppIcon.icns"
     ditto "$RESOURCE_CONTENT" "$staged/Contents/Resources"
-    codesign --force --sign - "$staged"
 }
 
 stage_app "$STAGED_CONTROL_CENTER" "$CONTROL_CENTER_NAME" "$CONTROL_CENTER_BINARY"
 stage_app "$STAGED_TRACKER" "$TRACKER_NAME" "$TRACKER_BINARY"
 
-print "==> bundling launch agent"
-LAUNCH_AGENT_NAME="com.llmusage.tracker.plist"
-mkdir -p "$STAGED_CONTROL_CENTER/Contents/Library/LaunchAgents"
-cp "$PROJECT_ROOT/Packaging/$CONTROL_CENTER_NAME/LaunchAgents/$LAUNCH_AGENT_NAME" \
-    "$STAGED_CONTROL_CENTER/Contents/Library/LaunchAgents/$LAUNCH_AGENT_NAME"
-codesign --force --sign - "$STAGED_CONTROL_CENTER"
+print "==> signing ($SIGNING_IDENTITY)"
+codesign --force --sign "$SIGNING_IDENTITY" "$STAGED_TRACKER"
+codesign --force --sign "$SIGNING_IDENTITY" "$STAGED_CONTROL_CENTER"
+codesign --verify --deep --strict "$STAGED_CONTROL_CENTER"
 
 print "==> stopping old processes"
 for app_name in "$TRACKER_NAME" "$CONTROL_CENTER_NAME"; do
@@ -68,9 +73,15 @@ for app_name in "$TRACKER_NAME" "$CONTROL_CENTER_NAME"; do
 done
 
 print "==> installing"
-mkdir -p "$HOME/Applications"
+mkdir -p /Applications
+if [[ -d "$LEGACY_CONTROL_CENTER_DESTINATION" ]]; then
+    "$LSREGISTER" -u "$LEGACY_CONTROL_CENTER_DESTINATION/Contents/Library/LoginItems/$TRACKER_NAME.app" >/dev/null 2>&1 || true
+    "$LSREGISTER" -u "$LEGACY_CONTROL_CENTER_DESTINATION" >/dev/null 2>&1 || true
+    rm -rf "$LEGACY_CONTROL_CENTER_DESTINATION"
+fi
 rm -rf "$CONTROL_CENTER_DESTINATION"
 ditto "$STAGED_CONTROL_CENTER" "$CONTROL_CENTER_DESTINATION"
+codesign --verify --deep --strict "$CONTROL_CENTER_DESTINATION"
 
 "$LSREGISTER" -f "$TRACKER_DESTINATION" >/dev/null 2>&1 || true
 "$LSREGISTER" -f "$CONTROL_CENTER_DESTINATION" >/dev/null 2>&1 || true

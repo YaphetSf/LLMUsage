@@ -36,10 +36,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isRefreshing = false
     private var preferencesObserver: NSObjectProtocol?
     private let warmUp: WarmUpCoordinator
+    private let launchAtLogin: TrackerLoginItem?
 
     init(providers: [any UsageProvider]) {
         self.providers = providers
         warmUp = WarmUpCoordinator(window: Self.sessionWindow(providers))
+        launchAtLogin = Bundle.main.bundleIdentifier == TrackerHelper.bundleIdentifier
+            ? TrackerLoginItem() : nil
     }
 
     /// Accounts the tracker actually polls. Read per use rather than cached at launch so a
@@ -71,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        launchAtLogin?.start()
         configureMainMenu()
         configureStatusItem()
         configurePopover()
@@ -102,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        launchAtLogin?.stop()
         refreshTimer?.invalidate()
         refreshTimer = nil
         resetRefreshTimer?.invalidate()
