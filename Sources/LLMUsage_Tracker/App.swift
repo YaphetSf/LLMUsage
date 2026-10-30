@@ -94,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let data = try? encoder.encode(snapshots) else { return }
         AppPreferences.defaults.set(data, forKey: AppPreferences.providerSnapshotsKey)
         AppPreferences.defaults.set(Date(), forKey: AppPreferences.providerSnapshotsUpdatedAtKey)
+        try? UsageExport.write(snapshots)
         DistributedNotificationCenter.default().post(
             name: AppPreferences.snapshotsDidChangeNotification,
             object: nil
