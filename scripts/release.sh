@@ -10,7 +10,8 @@ APP_ICON="$PROJECT_ROOT/Packaging/AppIcon.icns"
 DIST_DIRECTORY="$PROJECT_ROOT/dist"
 
 CODESIGN_IDENTITY=${CODESIGN_IDENTITY:-"Developer ID Application: Optical support limited (5ZK6D32Z6F)"}
-NOTARY_KEYCHAIN_PROFILE=${NOTARY_KEYCHAIN_PROFILE:-"QRStudio"}
+NOTARY_KEYCHAIN_PROFILE=${NOTARY_KEYCHAIN_PROFILE:-"notary"}
+NOTARY_KEYCHAIN=${NOTARY_KEYCHAIN:-"$HOME/Library/Keychains/signing.keychain-db"}
 VOLUME_NAME=${VOLUME_NAME:-"LLMUsage"}
 
 if ! /usr/bin/security find-identity -v -p codesigning \
@@ -19,9 +20,10 @@ if ! /usr/bin/security find-identity -v -p codesigning \
     print -u2 "Set CODESIGN_IDENTITY to override."
     exit 1
 fi
-if ! /usr/bin/xcrun notarytool history --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" >/dev/null 2>&1; then
-    print -u2 "Notary keychain profile not found: $NOTARY_KEYCHAIN_PROFILE"
-    print -u2 "Create one with: xcrun notarytool store-credentials \"$NOTARY_KEYCHAIN_PROFILE\""
+if ! /usr/bin/xcrun notarytool history --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+    --keychain "$NOTARY_KEYCHAIN" >/dev/null 2>&1; then
+    print -u2 "Notary keychain profile not found in $NOTARY_KEYCHAIN: $NOTARY_KEYCHAIN_PROFILE"
+    print -u2 "Create it with: ~/Projects/dotfiles/keys/signing-keychain.sh"
     print -u2 "Or set NOTARY_KEYCHAIN_PROFILE to override."
     exit 1
 fi
@@ -87,6 +89,7 @@ NOTARY_ZIP="$DIST_DIRECTORY/notary.zip"
 ditto -c -k --keepParent "$DIST_DIRECTORY/$CONTROL_CENTER_NAME.app" "$NOTARY_ZIP"
 /usr/bin/xcrun notarytool submit "$NOTARY_ZIP" \
     --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+    --keychain "$NOTARY_KEYCHAIN" \
     --wait
 
 print "==> stapling"
@@ -114,7 +117,7 @@ codesign --force --timestamp --sign "$CODESIGN_IDENTITY" "$DMG_PATH"
 
 print "==> notarizing DMG"
 /usr/bin/xcrun notarytool submit "$DMG_PATH" \
-    --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --wait
+    --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --keychain "$NOTARY_KEYCHAIN" --wait
 /usr/bin/xcrun stapler staple "$DMG_PATH"
 /usr/bin/xcrun stapler validate "$DMG_PATH"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
