@@ -11,7 +11,7 @@ DIST_DIRECTORY="$PROJECT_ROOT/dist"
 
 CODESIGN_IDENTITY=${CODESIGN_IDENTITY:-"Developer ID Application: Optical support limited (5ZK6D32Z6F)"}
 NOTARY_KEYCHAIN_PROFILE=${NOTARY_KEYCHAIN_PROFILE:-"notary"}
-NOTARY_KEYCHAIN=${NOTARY_KEYCHAIN:-"$HOME/Library/Keychains/signing.keychain-db"}
+NOTARY_KEYCHAIN=${NOTARY_KEYCHAIN:-"$HOME/.keys/signing.keychain-db"}
 [[ -f $NOTARY_KEYCHAIN ]] && /usr/bin/security unlock-keychain -p "" "$NOTARY_KEYCHAIN"
 VOLUME_NAME=${VOLUME_NAME:-"LLMUsage"}
 
