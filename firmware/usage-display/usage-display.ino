@@ -281,13 +281,53 @@ static void handleUsage() {
 static void handleHealth() {
   JsonDocument doc;
   doc["uptime_s"] = millis() / 1000;
+  doc["reset_reason"] = int(esp_reset_reason());
   doc["rssi"] = WiFi.RSSI();
+  doc["bssid"] = WiFi.BSSIDstr();
+  doc["channel"] = WiFi.channel();
   doc["providers"] = providerCount;
   doc["updated_at"] = updatedAt;
   doc["stale"] = updatedAt != 0 && nowSeconds() - updatedAt > staleAfter;
   String body;
   serializeJson(doc, body);
   server.send(200, "application/json", body);
+}
+
+static void handleScan() {
+  const int found = WiFi.scanNetworks();
+  JsonDocument doc;
+  JsonArray aps = doc.to<JsonArray>();
+  for (int i = 0; i < found; i++) {
+    if (WiFi.SSID(i) != WIFI_SSID) continue;
+    JsonObject ap = aps.add<JsonObject>();
+    ap["bssid"] = WiFi.BSSIDstr(i);
+    ap["channel"] = WiFi.channel(i);
+    ap["rssi"] = WiFi.RSSI(i);
+  }
+  WiFi.scanDelete();
+  String body;
+  serializeJson(doc, body);
+  server.send(200, "application/json", body);
+}
+
+// The driver's own connect scan joins a weaker AP on some boots, so pick the BSSID here.
+static void joinStrongest() {
+  WiFi.disconnect();
+  const int found = WiFi.scanNetworks();
+  int best = -1;
+  for (int i = 0; i < found; i++) {
+    if (WiFi.SSID(i) == WIFI_SSID && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best))) best = i;
+  }
+  if (best >= 0) {
+    uint8_t bssid[6];
+    memcpy(bssid, WiFi.BSSID(best), sizeof(bssid));
+    const int32_t channel = WiFi.channel(best);
+    WiFi.scanDelete();
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD, channel, bssid);
+  } else {
+    WiFi.scanDelete();
+  }
+  lastJoinMs = millis();
 }
 
 void setup() {
@@ -312,17 +352,19 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
-  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
-  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
-  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) { disconnectReason = info.wifi_sta_disconnected.reason; },
-               ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  lastJoinMs = millis();
+  WiFi.onEvent(
+      [](WiFiEvent_t, WiFiEventInfo_t info) {
+        const uint8_t reason = info.wifi_sta_disconnected.reason;
+        if (reason != WIFI_REASON_ASSOC_LEAVE) disconnectReason = reason;
+      },
+      ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  joinStrongest();
 
   const char *headers[] = {"X-Now"};
   server.collectHeaders(headers, 1);
   server.on("/usage", HTTP_POST, handleUsage);
   server.on("/health", HTTP_GET, handleHealth);
+  server.on("/scan", HTTP_GET, handleScan);
   server.begin();
 }
 
@@ -351,15 +393,12 @@ void loop() {
 
   if (!connected && millis() - lastStatusMs >= 5000) {
     lastStatusMs = millis();
+    const uint8_t reason = disconnectReason;
     Serial.printf("wifi: status=%d reason=%s\n", int(WiFi.status()),
-                  WiFi.disconnectReasonName(wifi_err_reason_t(disconnectReason)));
+                  reason != 0 ? WiFi.disconnectReasonName(wifi_err_reason_t(reason)) : "-");
   }
 
-  if (!connected && millis() - lastJoinMs >= REJOIN_MS) {
-    lastJoinMs = millis();
-    WiFi.disconnect();
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  }
+  if (!connected && millis() - lastJoinMs >= REJOIN_MS) joinStrongest();
 
   if (millis() - lastRenderMs >= REDRAW_MS) render();
   delay(2);

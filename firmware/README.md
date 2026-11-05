@@ -4,6 +4,7 @@
 ./firmware/flash.sh
 ./firmware/install-push.sh
 curl http://llmusage-display.local/health
+curl http://llmusage-display.local/scan
 launchctl print gui/$(id -u)/com.dz.llmusage.display
 ```
 
