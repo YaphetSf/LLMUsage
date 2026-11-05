@@ -72,10 +72,10 @@ tracker's own environment is passed on: whoever launched the tracker, a stale `H
 or agent-session variables never reach a run. A blank executable path resolves through that
 shell's `PATH`. The installed CLIs must support these flags.
 
-GLM keys are saved in Keychain. The shared credential loader also recognizes the existing
-`.config/openusage/zai.json` source, then `ZAI_API_KEY` / `GLM_API_KEY` from the process
-environment. Removing the Keychain override restores this lookup order. Quota monitoring uses
-the same loader. No key is stored in defaults.
+GLM keys are saved in Keychain. Without one, the shared credential loader reads `ZAI_API_KEY` /
+`GLM_API_KEY` from `~/.keys/llm.env`, then from the process environment. Removing the Keychain
+override restores this lookup order. Quota monitoring uses the same loader. No key is stored in
+defaults.
 
 The GLM endpoint selector distinguishes Coding Plan and Standard API. Requests use `glm-5.3`,
 low reasoning effort and a 64-token output limit. GLM 5.3 requires reasoning; see the

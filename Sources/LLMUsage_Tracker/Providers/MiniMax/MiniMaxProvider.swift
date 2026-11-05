@@ -32,7 +32,7 @@ struct MiniMaxProvider: UsageProvider {
     }
 
     /// Probes each candidate base URL in order and returns the first one whose body decodes
-    /// cleanly. Region-pin (config or env) locks the order so a configured region never silently
+    /// cleanly. `MINIMAX_REGION` locks the order so a configured region never silently
     /// switches; without a hint we try both regions, since MiniMax returns a hard `2049`
     /// "wrong region" otherwise and the only way to learn the correct one is to ask.
     private static func firstSuccessful(
@@ -192,58 +192,14 @@ struct MiniMaxProvider: UsageProvider {
     }
 
     private static func loadCredential() throws -> Credential {
-        if let credential = readConfigFile() { return credential }
-        if let credential = readRawKeyFile() { return credential }
-
-        let environment = ProcessInfo.processInfo.environment
-        if let key = trimmed(environment["MINIMAX_API_KEY"]) {
-            let region = Region(rawValue: environment["MINIMAX_REGION"]?.lowercased() ?? "")
-                ?? .global
-            return Credential(apiKey: key, region: region, kind: kind(forKey: key))
-        }
-
-        throw UsageError.missingCredentials
-    }
-
-    private static func readConfigFile() -> Credential? {
-        let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/llmusage/minimax.json")
-        guard let data = try? Data(contentsOf: path),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let key = trimmed(root["apiKey"] as? String)
-        else { return nil }
-
-        let regionRaw = (root["region"] as? String)?.lowercased()
-        let region = Region(rawValue: regionRaw ?? "") ?? .global
-        return Credential(apiKey: key, region: region, kind: kind(forKey: key))
-    }
-
-    /// A bare key file at `~/.config/llm/minimax.key` is the convention several tools on this
-    /// machine already share (the opencode provider block points its `apiKey` at it). Reading it
-    /// here means the user does not have to maintain a second copy just for LLMUsage.
-    private static func readRawKeyFile() -> Credential? {
-        let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/llm/minimax.key")
-        guard let data = try? Data(contentsOf: path),
-              let key = String(data: data, encoding: .utf8).flatMap(trimmed)
-        else { return nil }
-
-        let environment = ProcessInfo.processInfo.environment
-        let region = Region(rawValue: environment["MINIMAX_REGION"]?.lowercased() ?? "")
-            ?? .global
+        guard let key = LLMEnvFile.value("MINIMAX_API_KEY") else { throw UsageError.missingCredentials }
+        let region = Region(rawValue: LLMEnvFile.value("MINIMAX_REGION")?.lowercased() ?? "") ?? .global
         return Credential(apiKey: key, region: region, kind: kind(forKey: key))
     }
 
     private static func kind(forKey key: String) -> CredentialKind {
         if key.hasPrefix("sk-api-") { return .payAsYouGo }
         return .tokenPlan
-    }
-
-    private static func trimmed(_ value: String?) -> String? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
-            return nil
-        }
-        return value
     }
 }
 

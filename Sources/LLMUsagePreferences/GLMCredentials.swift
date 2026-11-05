@@ -38,23 +38,8 @@ public enum GLMCredentials {
         guard status == errSecSuccess else { throw CredentialError(status: status) }
     }
 
-    /// Share the existing GLM credential source with quota monitoring.
     public static func load() throws -> String? {
-        if let key = try savedKey() { return key }
-        let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/openusage/zai.json")
-        if let data = try? Data(contentsOf: path),
-           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let key = nonempty(root["apiKey"] as? String) { return key }
-        for name in ["ZAI_API_KEY", "GLM_API_KEY"] {
-            if let key = nonempty(ProcessInfo.processInfo.environment[name]) { return key }
-        }
-        return nil
-    }
-
-    private static func nonempty(_ value: String?) -> String? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
-        return value
+        try savedKey() ?? LLMEnvFile.value("ZAI_API_KEY", "GLM_API_KEY")
     }
 
     private struct CredentialError: LocalizedError {
