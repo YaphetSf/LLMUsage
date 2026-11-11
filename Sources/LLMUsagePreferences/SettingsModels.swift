@@ -139,6 +139,7 @@ public enum AppPreferences {
     /// Wall-clock timestamp the tracker wrote its last snapshot bundle, so the control
     /// center can show "Updated 3m ago" without re-fetching anything.
     public static let providerSnapshotsUpdatedAtKey = "providerSnapshotsUpdatedAt"
+    public static let serverConnectionErrorKey = "serverConnectionError"
     public static let didChangeNotification = Notification.Name("com.llmusage.preferencesDidChange")
     public static let snapshotsDidChangeNotification = Notification.Name("com.llmusage.snapshotsDidChange")
     @MainActor public static let defaults = UserDefaults(suiteName: "com.llmusage.shared")!

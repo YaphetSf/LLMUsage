@@ -1,6 +1,8 @@
 import Combine
 import Foundation
 import LLMUsageHistory
+import LLMUsagePreferences
+import LLMUsageRemote
 import SwiftUI
 
 /// How granular each bar on the chart represents time.
@@ -47,6 +49,7 @@ final class UsageStore: ObservableObject {
 
     @Published private(set) var results: [ProviderHistory] = []
     @Published private(set) var isScanning = false
+    @Published private(set) var errorMessage: String?
     @Published private(set) var totalTokens = TokenBreakdown()
     @Published private(set) var totalRequests = 0
     @Published private(set) var dailySeries: [UsageDayPoint] = []
@@ -58,18 +61,25 @@ final class UsageStore: ObservableObject {
         didSet { if dayOffset != oldValue { rebuildProjection() } }
     }
 
-    private let repository: UsageHistoryRepository
+    private let repository: any UsageHistorySource
     private let now: @Sendable () -> Date
-    private let calendar: Calendar
+    private var calendar: Calendar
     private var snapshot: UsageHistorySnapshot?
     private var refreshTask: Task<Void, Never>?
 
     init(
-        repository: UsageHistoryRepository = UsageHistoryRepository(),
+        repository: (any UsageHistorySource)? = nil,
+        configuration: RuntimeConfiguration = .current,
         now: @escaping @Sendable () -> Date = Date.init,
         calendar: Calendar = .current
     ) {
-        self.repository = repository
+        if let repository {
+            self.repository = repository
+        } else if configuration.role == .server {
+            self.repository = UsageHistoryRepository()
+        } else {
+            self.repository = RemoteUsageClient(configuration: configuration)
+        }
         self.now = now
         self.calendar = calendar
     }
@@ -103,12 +113,17 @@ final class UsageStore: ObservableObject {
         if snapshot == nil, let cached = await repository.cachedSnapshot(timeZone: timeZone) {
             apply(cached)
         }
-        let fresh = await repository.refresh(
-            daysBack: Self.historyWindow,
-            now: now(),
-            timeZone: timeZone
-        )
-        apply(fresh)
+        do {
+            let fresh = try await repository.refresh(
+                daysBack: Self.historyWindow,
+                now: now(),
+                timeZone: timeZone
+            )
+            errorMessage = nil
+            apply(fresh)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     var hasAnyUsage: Bool { results.contains { $0.history?.days.isEmpty == false } }
@@ -171,6 +186,9 @@ final class UsageStore: ObservableObject {
 
     private func apply(_ snapshot: UsageHistorySnapshot) {
         self.snapshot = snapshot
+        if let timeZone = TimeZone(identifier: snapshot.timeZoneIdentifier) {
+            calendar.timeZone = timeZone
+        }
         rebuildProjection()
     }
 

@@ -14,6 +14,7 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                if RuntimeConfiguration.current.role == .client { serverCard }
                 providersCard
                 refreshCard
                 startupCard
@@ -30,16 +31,37 @@ struct OverviewView: View {
 
     // MARK: Providers
 
+    private var serverCard: some View {
+        HStack {
+            Text(RuntimeConfiguration.current.serverName ?? "Server")
+            Spacer()
+            if let error = snapshots.connectionError {
+                Text(error).foregroundStyle(Brand.warning)
+            }
+            if let updatedAt = snapshots.updatedAt {
+                Text(updatedAt, style: .relative).foregroundStyle(.secondary)
+            } else if snapshots.connectionError == nil {
+                Text("Connecting").foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .glassCard()
+    }
+
     /// Rows come from the account registry, not the snapshot bundle: a switched-off account
     /// has no snapshot anymore, and its row is the only way back on.
     private var providersCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(spacing: 10) {
-                ForEach(KnownProvider.allCases) { provider in
+                ForEach(KnownProvider.allCases.filter { provider in
+                    RuntimeConfiguration.current.role == .server || snapshots.snapshots.contains(where: { $0.id == provider.id })
+                }) { provider in
                     OverviewProviderRow(
                         provider: provider,
                         snapshot: snapshots.snapshots.first { $0.id == provider.id },
-                        isTracked: !preferences.disabledProviderIDs.contains(provider.id)
+                        isTracked: RuntimeConfiguration.current.role == .client
+                            || !preferences.disabledProviderIDs.contains(provider.id),
+                        showsTrackingToggle: RuntimeConfiguration.current.role == .server
                     ) { tracked in
                         if tracked {
                             preferences.disabledProviderIDs.remove(provider.id)
@@ -128,6 +150,7 @@ private struct OverviewProviderRow: View {
     let provider: KnownProvider
     let snapshot: ProviderSnapshot?
     let isTracked: Bool
+    var showsTrackingToggle = true
     let onChange: @MainActor @Sendable (Bool) -> Void
 
     private var session: MetricLine? { usage?.lines.first { $0.label == "Session" } }
@@ -156,7 +179,7 @@ private struct OverviewProviderRow: View {
                     percentRow(label: "1w", metric: weekly)
                 }
             }
-            Toggle("", isOn: Binding(
+            if showsTrackingToggle { Toggle("", isOn: Binding(
                 get: { isTracked },
                 set: onChange
             ))
@@ -164,6 +187,7 @@ private struct OverviewProviderRow: View {
             .toggleStyle(.switch)
             .tint(Brand.active)
             .accessibilityLabel("Track \(provider.displayName) usage")
+            }
         }
         .padding(.vertical, 4)
     }

@@ -16,6 +16,7 @@ struct UsageDashboardView: View {
     let providers: [ProviderCardState]
     let displayMode: UsageDisplayMode
     let isRefreshing: Bool
+    var connectionError: String? = nil
     let onRefresh: () -> Void
     let onOpenSettings: () -> Void
     let onQuit: () -> Void
@@ -84,6 +85,12 @@ struct UsageDashboardView: View {
             .help("Settings")
             .accessibilityLabel("Settings")
 
+            if connectionError != nil {
+                Text("Offline")
+                    .font(.caption)
+                    .foregroundStyle(Brand.warning)
+            }
+
             Spacer(minLength: 0)
 
             if isRefreshing {
@@ -96,8 +103,8 @@ struct UsageDashboardView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(GlassIconButtonStyle())
-                .help("Refresh all providers")
-                .accessibilityLabel("Refresh all providers")
+                .help("Refresh usage")
+                .accessibilityLabel("Refresh usage")
             }
 
             Button(action: onQuit) {

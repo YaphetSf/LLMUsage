@@ -14,6 +14,13 @@ struct UsageView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 rangeCard
+                if let error = store.errorMessage {
+                    Text(error)
+                        .foregroundStyle(Brand.warning)
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .glassCard()
+                }
                 if store.everythingUninstalled {
                     emptyCard
                 } else {
@@ -47,7 +54,7 @@ struct UsageView: View {
                 if store.isScanning {
                     ProgressView()
                         .controlSize(.small)
-                        .accessibilityLabel("Scanning local logs")
+                        .accessibilityLabel("Loading usage")
                 } else if store.range.granularity == .hour {
                     Text(store.selectedDayLabel)
                         .font(.system(.subheadline, design: .rounded).weight(.semibold))

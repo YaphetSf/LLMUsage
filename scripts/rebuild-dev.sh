@@ -87,9 +87,11 @@ codesign --verify --deep --strict "$CONTROL_CENTER_DESTINATION"
 "$LSREGISTER" -f "$CONTROL_CENTER_DESTINATION" >/dev/null 2>&1 || true
 
 print "==> launching $TRACKER_NAME"
-/usr/bin/open "$TRACKER_DESTINATION"
+/usr/bin/open -g -j "$TRACKER_DESTINATION"
 
 print "Installed $TRACKER_DESTINATION"
 print "Installed $CONTROL_CENTER_DESTINATION"
 
-open "$CONTROL_CENTER_DESTINATION"
+if [[ "${LLMUSAGE_LAUNCH_UI:-1}" != 0 ]]; then
+    open "$CONTROL_CENTER_DESTINATION"
+fi

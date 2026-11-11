@@ -56,6 +56,7 @@ final class Preferences: ObservableObject {
 final class SnapshotStore: ObservableObject {
     @Published private(set) var snapshots: [ProviderSnapshot] = []
     @Published private(set) var updatedAt: Date?
+    @Published private(set) var connectionError: String?
 
     private var observer: NSObjectProtocol?
 
@@ -83,6 +84,7 @@ final class SnapshotStore: ObservableObject {
             snapshots = decoded
         }
         updatedAt = AppPreferences.defaults.object(forKey: AppPreferences.providerSnapshotsUpdatedAtKey) as? Date
+        connectionError = AppPreferences.defaults.string(forKey: AppPreferences.serverConnectionErrorKey)
     }
 }
 

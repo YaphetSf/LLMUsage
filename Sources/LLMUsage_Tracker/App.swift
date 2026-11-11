@@ -1,6 +1,9 @@
 import AppKit
+import Darwin
 import Foundation
 import LLMUsagePreferences
+import LLMUsageHistory
+import LLMUsageRemote
 import LLMUsageUI
 import SwiftUI
 
@@ -8,8 +11,20 @@ import SwiftUI
 struct LLMUsageTrackerApp {
     @MainActor
     static func main() async {
-        let providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), ZAIProvider(), MiniMaxProvider()]
+        let configuration = RuntimeConfiguration.current
+        let providers: [any UsageProvider] = configuration.role == .server
+            ? [ClaudeProvider(), CodexProvider(), ZAIProvider(), MiniMaxProvider()] : []
         if CommandLine.arguments.contains("--once") {
+            if configuration.role == .client {
+                do {
+                    let document = try await RemoteUsageClient(configuration: configuration).quota()
+                    AppDelegate.printOnce(document.snapshots)
+                } catch {
+                    FileHandle.standardError.write(Data("LLMUsage: \(error.localizedDescription)\n".utf8))
+                    exit(EXIT_FAILURE)
+                }
+                return
+            }
             let active = providers.filter { !AppPreferences.disabledProviderIDs.contains($0.id) }
             let results = await AppDelegate.fetchAll(active)
             AppDelegate.printOnce(results, providers: active)
@@ -17,7 +32,7 @@ struct LLMUsageTrackerApp {
         }
 
         let app = NSApplication.shared
-        let delegate = AppDelegate(providers: providers)
+        let delegate = AppDelegate(providers: providers, configuration: configuration)
         app.delegate = delegate
         app.run()
         withExtendedLifetime(delegate) {}
@@ -35,12 +50,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var resetRefreshTimer: Timer?
     private var isRefreshing = false
     private var preferencesObserver: NSObjectProtocol?
-    private let warmUp: WarmUpCoordinator
+    private let configuration: RuntimeConfiguration
+    private let remote: RemoteUsageClient
+    private let warmUp: WarmUpCoordinator?
+    private var historyTask: Task<Void, Never>?
+    private var lastHistoryRefresh: Date = .distantPast
     private let launchAtLogin: TrackerLoginItem?
 
-    init(providers: [any UsageProvider]) {
+    init(providers: [any UsageProvider], configuration: RuntimeConfiguration = .current) {
         self.providers = providers
-        warmUp = WarmUpCoordinator(window: Self.sessionWindow(providers))
+        self.configuration = configuration
+        remote = RemoteUsageClient(configuration: configuration)
+        warmUp = configuration.role == .server
+            ? WarmUpCoordinator(window: Self.sessionWindow(providers)) : nil
         launchAtLogin = Bundle.main.bundleIdentifier == TrackerHelper.bundleIdentifier
             ? TrackerLoginItem() : nil
     }
@@ -50,6 +72,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `handlePreferencesChange`.
     private var activeProviders: [any UsageProvider] {
         providers.filter { !AppPreferences.disabledProviderIDs.contains($0.id) }
+    }
+
+    private var displayedProviders: [(id: String, displayName: String)] {
+        if configuration.role == .server {
+            return activeProviders.map { ($0.id, $0.displayName) }
+        }
+        return snapshots.values.sorted { $0.id < $1.id }.map { ($0.id, $0.displayName) }
     }
 
     /// Warm up asks for the client's session window at the instant it fires; the published
@@ -79,7 +108,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem()
         configurePopover()
         scheduleRefreshTimer()
-        warmUp.start()
+        warmUp?.start()
+        if configuration.role == .client {
+            let cached = remote.cachedQuota()
+            let results = cached?.snapshots ?? []
+            snapshots = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
+            publishSnapshots(results, at: cached?.updatedAt)
+            updatePresentation()
+        }
         preferencesObserver = DistributedNotificationCenter.default().addObserver(
             forName: AppPreferences.didChangeNotification,
             object: nil,
@@ -92,13 +128,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Persist the latest snapshot bundle to the shared defaults suite so the control center
     /// (a separate process) can show the same numbers without re-fetching from each provider.
-    private func publishSnapshots(_ snapshots: [ProviderSnapshot]) {
+    private func publishSnapshots(_ snapshots: [ProviderSnapshot], at updatedAt: Date? = Date()) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(snapshots) else { return }
         AppPreferences.defaults.set(data, forKey: AppPreferences.providerSnapshotsKey)
-        AppPreferences.defaults.set(Date(), forKey: AppPreferences.providerSnapshotsUpdatedAtKey)
-        try? UsageExport.write(snapshots)
+        AppPreferences.defaults.set(updatedAt, forKey: AppPreferences.providerSnapshotsUpdatedAtKey)
+        if configuration.role == .server { try? UsageExport.write(snapshots) }
         DistributedNotificationCenter.default().post(
             name: AppPreferences.snapshotsDidChangeNotification,
             object: nil
@@ -111,7 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer = nil
         resetRefreshTimer?.invalidate()
         resetRefreshTimer = nil
-        warmUp.stop()
+        warmUp?.stop()
+        historyTask?.cancel()
         if let preferencesObserver {
             DistributedNotificationCenter.default().removeObserver(preferencesObserver)
         }
@@ -176,11 +213,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isRefreshing else { return }
         isRefreshing = true
         updatePresentation()
+        if configuration.role == .client {
+            do {
+                let document = try await remote.quota()
+                let results = document.snapshots
+                snapshots = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
+                AppPreferences.defaults.removeObject(forKey: AppPreferences.serverConnectionErrorKey)
+                publishSnapshots(results, at: document.updatedAt)
+                statusItem?.button?.toolTip = configuration.serverName ?? "Server"
+            } catch {
+                AppPreferences.defaults.set(error.localizedDescription, forKey: AppPreferences.serverConnectionErrorKey)
+                statusItem?.button?.toolTip = "Offline: \(error.localizedDescription)"
+                publishSnapshots(Array(snapshots.values), at: remote.cachedQuota()?.updatedAt)
+            }
+            isRefreshing = false
+            updatePresentation()
+            return
+        }
         // Rebuilding the dictionary wholesale drops the snapshot of an account switched off
         // mid-flight instead of letting it linger until the next relaunch.
         let results = await Self.fetchAll(activeProviders)
         snapshots = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
         publishSnapshots(results)
+        refreshHistoryIfNeeded()
         isRefreshing = false
         scheduleResetRefreshTimer()
         updatePresentation()
@@ -192,11 +247,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func refreshHistoryIfNeeded() {
+        guard historyTask == nil, Date().timeIntervalSince(lastHistoryRefresh) >= 300 else { return }
+        historyTask = Task { [weak self] in
+            let repository = UsageHistoryRepository()
+            let snapshot = await repository.refresh(daysBack: 90)
+            guard !Task.isCancelled else { return }
+            do {
+                try UsageHistoryExport.write(snapshot)
+                self?.lastHistoryRefresh = Date()
+            } catch {
+                NSLog("History export failed: %@", error.localizedDescription)
+            }
+            self?.historyTask = nil
+        }
+    }
+
     /// Reacts to a preference flip from the control center. The refresh cadence may have
     /// changed, and an account just switched off has to leave the strip now, not at the next
     /// refresh. A switched-on account has no snapshot yet, so it needs a full fetch.
     private func handlePreferencesChange() {
         scheduleRefreshTimer()
+        guard configuration.role == .server else {
+            updatePresentation()
+            return
+        }
         let active = activeProviders
         let activeIDs = Set(active.map(\.id))
         let before = snapshots
@@ -225,11 +300,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func dashboardView() -> UsageDashboardView {
         UsageDashboardView(
-            providers: activeProviders.map {
+            providers: displayedProviders.map {
                 ProviderCardState(id: $0.id, displayName: $0.displayName, snapshot: snapshots[$0.id])
             },
             displayMode: AppPreferences.usageDisplayMode,
             isRefreshing: isRefreshing,
+            connectionError: configuration.role == .client
+                ? AppPreferences.defaults.string(forKey: AppPreferences.serverConnectionErrorKey) : nil,
             onRefresh: { [weak self] in self?.refreshNow() },
             onOpenSettings: { [weak self] in self?.openSettings() },
             onQuit: { NSApp.terminate(nil) }
@@ -240,7 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
         let displayMode = AppPreferences.usageDisplayMode
         let menuBarDisplayMode = AppPreferences.menuBarDisplayMode
-        let metrics = activeProviders.map { provider in
+        let metrics = displayedProviders.map { provider in
             let presentation = Self.compactPresentation(
                 for: snapshots[provider.id],
                 displayMode: displayMode
@@ -403,10 +480,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    nonisolated static func printOnce(_ snapshots: [ProviderSnapshot], providers: [any UsageProvider]) {
+    nonisolated static func printOnce(_ snapshots: [ProviderSnapshot], providers: [any UsageProvider]? = nil) {
         let byID = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.id, $0) })
-        for provider in providers {
-            guard let snapshot = byID[provider.id] else { continue }
+        for id in providers?.map(\.id) ?? snapshots.map(\.id) {
+            guard let snapshot = byID[id] else { continue }
             switch snapshot.result {
             case .success(let usage):
                 let plan = usage.plan.map { " [\($0)]" } ?? ""

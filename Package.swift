@@ -16,6 +16,7 @@ let package = Package(
         /// both executables need it — the control center renders the Usage page from it, and the
         /// tracker can price a menu-bar spend figure from the same scan.
         .target(name: "LLMUsageHistory", path: "Sources/LLMUsageHistory"),
+        .target(name: "LLMUsageRemote", dependencies: ["LLMUsageHistory", "LLMUsagePreferences"]),
         .target(
             name: "LLMUsageUI",
             dependencies: ["LLMUsagePreferences"],
@@ -25,7 +26,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LLMUsage_Tracker",
-            dependencies: ["LLMUsagePreferences", "LLMUsageUI", "LLMUsageHistory"],
+            dependencies: ["LLMUsagePreferences", "LLMUsageUI", "LLMUsageHistory", "LLMUsageRemote"],
             path: "Sources/LLMUsage_Tracker",
             linkerSettings: [
                 .linkedFramework("AppKit"),
@@ -34,7 +35,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LLMUsage",
-            dependencies: ["LLMUsagePreferences", "LLMUsageUI", "LLMUsageHistory"],
+            dependencies: ["LLMUsagePreferences", "LLMUsageUI", "LLMUsageHistory", "LLMUsageRemote"],
             path: "Sources/LLMUsage",
             linkerSettings: [
                 .linkedFramework("AppKit")
@@ -45,6 +46,7 @@ let package = Package(
             dependencies: ["LLMUsageHistory"],
             path: "Tests/LLMUsageHistoryTests"
         ),
+        .testTarget(name: "LLMUsageRemoteTests", dependencies: ["LLMUsageRemote", "LLMUsageHistory", "LLMUsagePreferences", "LLMUsage_Tracker"]),
         .testTarget(
             name: "LLMUsageTests",
             dependencies: ["LLMUsage", "LLMUsageHistory"],

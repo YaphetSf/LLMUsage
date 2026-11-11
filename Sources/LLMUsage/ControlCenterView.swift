@@ -45,7 +45,6 @@ struct ControlCenterView: View {
     @StateObject private var snapshots = SnapshotStore()
     @StateObject private var launchAtLogin = LaunchAtLoginController()
     @StateObject private var usageStore = UsageStore()
-    @StateObject private var warmUp = WarmUpSettings()
 
     var body: some View {
         ZStack {
@@ -69,7 +68,6 @@ struct ControlCenterView: View {
         .environmentObject(preferences)
         .environmentObject(snapshots)
         .environmentObject(launchAtLogin)
-        .environmentObject(warmUp)
         .animation(.spring(response: 0.42, dampingFraction: 0.85), value: selection)
         .frame(minWidth: 820, minHeight: 560)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -86,7 +84,7 @@ struct ControlCenterView: View {
             case .usage: UsageView(store: usageStore)
             case .menuBar: MenuBarSettingsView()
             case .appearance: AppearanceSettingsView()
-            case .warmUp: WarmUpView()
+            case .warmUp: ServerWarmUpView()
             case .about: AboutView()
             }
         }
@@ -127,7 +125,9 @@ private struct Sidebar: View {
             .padding(.top, 48)
             .padding(.bottom, 18)
 
-            ForEach(ControlCenterView.Destination.allCases) { destination in
+            ForEach(ControlCenterView.Destination.allCases.filter {
+                $0 != .warmUp || RuntimeConfiguration.current.role == .server
+            }) { destination in
                 row(destination)
             }
 
@@ -135,7 +135,7 @@ private struct Sidebar: View {
 
             HStack(spacing: 10) {
                 StatusDot(isOn: tracker.isRunning)
-                Text(tracker.isRunning ? "Activated" : "Deactivated")
+                Text("Menu bar")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer(minLength: 0)
@@ -147,7 +147,7 @@ private struct Sidebar: View {
                 .toggleStyle(.switch)
                 .tint(Brand.active)
                 .disabled(!tracker.isInstalled)
-                .accessibilityLabel("Run the tracker in the background")
+                .accessibilityLabel("Show menu bar")
                 Text("v\(Self.shortVersion)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -184,6 +184,14 @@ private struct Sidebar: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
+    }
+}
+
+private struct ServerWarmUpView: View {
+    @StateObject private var settings = WarmUpSettings()
+
+    var body: some View {
+        WarmUpView().environmentObject(settings)
     }
 }
 
